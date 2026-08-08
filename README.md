@@ -124,6 +124,19 @@ igual que el navegador, y el bridge las ejecuta.
 Por eso puede correr donde quieras: en otra cuenta, en otro servidor o en
 otro juego. Solo necesita alcanzar el panel.
 
+### Traer gente a tu partida
+
+El botón **MI JOB ID**, junto al campo, coge el `game.JobId` del servidor
+donde está corriendo *el mando* y lo manda como destino de un tirón.
+
+Sirve para lo de siempre: tú estás en una partida, el bridge está en
+otra, y quieres que la gente venga contigo. Le das y el bridge empieza a
+teletransportar a tu servidor.
+
+Un Job ID solo vale dentro de su propio juego, así que si el Place ID
+configurado es otro, el mando te avisa en la barra de estado en vez de
+dejarte mandar gente a un sitio que no existe.
+
 - `RightControl` muestra u oculta la ventana.
 - La barra de título la arrastra; el `_` la pliega.
 - `getgenv().MANYSTEPS_CONTROL_STOP()` la cierra del todo.

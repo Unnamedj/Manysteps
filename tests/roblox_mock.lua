@@ -251,7 +251,8 @@ local services = {
 
 game = {
     PlaceId = 96342491571673,
-    JobId = "bridge-job-id",
+    -- El Job ID de la partida donde corre el script que se está probando.
+    JobId = "17272727-8171",
     GetService = function(_, name)
         if not services[name] then
             error("servicio no mockeado: " .. name)

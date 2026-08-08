@@ -156,6 +156,43 @@ check("un cambio hecho desde la web llega al mando",
     jobBox.Text == "cambiado-desde-la-web", jobBox.Text)
 
 ----------------------------------------------------------------------
+print("mandar el Job ID de esta partida")
+
+mock.reset()
+mock.fire(mock.findByName("UseMyJobButton"), "MouseButton1Click")
+
+local mine = mock.lastRequest()
+check("manda el Job ID de la partida donde está el mando",
+    mine and mine.body.type == "settings.jobId"
+    and mine.body.payload.jobId == "17272727-8171",
+    mine and tostring(mine.body.payload and mine.body.payload.jobId))
+
+check("y lo deja escrito en el campo", jobBox.Text == "17272727-8171", jobBox.Text)
+
+-- El mismo place que el destino configurado: nada que advertir.
+check("sin aviso si el place coincide",
+    mock.findByText("mandando tu Job ID: 17272727-8171") ~= nil)
+
+-- El campo aguanta hasta que el juego confirme, igual que al escribirlo.
+_G.__NEXT_RESPONSE = stateWith()
+mock.runSpawned(1)
+check("mientras el juego no lo confirme, sigue guardando",
+    mock.findByText("guardando…") ~= nil)
+check("y el campo no vuelve atrás", jobBox.Text == "17272727-8171", jobBox.Text)
+
+-- Con otro place, el Job ID no le sirve al bridge y hay que decirlo.
+placeBox.Text = "111222333"
+mock.reset()
+mock.fire(mock.findByName("UseMyJobButton"), "MouseButton1Click")
+check("avisa si estás en otro place distinto del destino",
+    mock.findByText("ojo: estás en el place 96342491571673, no en 111222333") ~= nil)
+
+-- Volvemos a dejar el campo como estaba para lo que viene.
+placeBox.Text = "96342491571673"
+_G.__NEXT_RESPONSE = stateWith({ game = { panelJobId = "17272727-8171" } })
+mock.runSpawned(1)
+
+----------------------------------------------------------------------
 print("teleport por tanda")
 
 mock.reset()
@@ -187,7 +224,7 @@ check("con el jugador marcado dentro",
     and batch.body.targets[1].userId)
 
 check("y con el Job ID que hay en el cuadro en ese momento",
-    batch and batch.body.jobId == "cambiado-desde-la-web", batch and batch.body.jobId)
+    batch and batch.body.jobId == "17272727-8171", batch and batch.body.jobId)
 
 check("tras enviarlos se limpia la selección",
     mock.findByText("0 seleccionados") ~= nil)

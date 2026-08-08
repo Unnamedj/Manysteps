@@ -475,7 +475,7 @@ local function field(labelText, placeholder, positionY, onSubmit)
         Parent = window,
     })
 
-    return box, hint
+    return box, hint, save
 end
 
 ----------------------------------------------------------------------
@@ -739,10 +739,63 @@ placeBox, placeHint = field("PLACE ID", "96342491571673", 218, function(value)
     sendCommand("settings.placeId", { placeId = placeId }, "place id enviado")
 end)
 
-jobBox, jobHint = field("JOB ID", "pega aquí el Job ID", 292, function(value)
+local jobSave
+jobBox, jobHint, jobSave = field("JOB ID", "pega aquí el Job ID", 292, function(value)
     local jobId = value:match("^%s*(.-)%s*$")
     pendingJobId = jobId
     sendCommand("settings.jobId", { jobId = jobId }, "job id enviado")
+end)
+
+-- Sitio para el botón de al lado.
+jobSave.Position = UDim2.fromOffset(170, 292)
+jobSave.Size = UDim2.fromOffset(76, 12)
+
+--- Manda como destino el servidor en el que está este mando. Es el gesto
+--- de "traedme a la gente aquí": el bridge está en otra partida y ahora
+--- teletransportará a este Job ID.
+local useMyJob = new("TextButton", {
+    Name = "UseMyJobButton",
+    Text = "MI JOB ID",
+    Font = Enum.Font.Code,
+    TextSize = 10,
+    TextColor3 = THEME.blue,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    BackgroundTransparency = 1,
+    AutoButtonColor = false,
+    Size = UDim2.fromOffset(84, 12),
+    Position = UDim2.fromOffset(80, 292),
+    Parent = window,
+})
+
+useMyJob.MouseEnter:Connect(function()
+    useMyJob.TextColor3 = THEME.text
+end)
+useMyJob.MouseLeave:Connect(function()
+    useMyJob.TextColor3 = THEME.blue
+end)
+
+useMyJob.MouseButton1Click:Connect(function()
+    local myJobId = tostring(game.JobId or "")
+    if myJobId == "" then
+        setStatus("esta partida no tiene Job ID (¿estás en Studio?)", "warn")
+        return
+    end
+
+    applyingState = true
+    jobBox.Text = myJobId
+    applyingState = false
+
+    pendingJobId = myJobId
+    sendCommand("settings.jobId", { jobId = myJobId }, "mandando tu Job ID: " .. myJobId)
+
+    -- Un Job ID solo vale dentro de su propio juego: si el destino
+    -- configurado es otro place, este Job ID no le sirve al bridge.
+    -- (%.0f y no tostring: un Place ID de 14 cifras acaba en "9.6342e+13".)
+    local myPlaceId = string.format("%.0f", game.PlaceId)
+    local targetPlaceId = placeBox.Text:match("^%s*(.-)%s*$")
+    if targetPlaceId ~= "" and targetPlaceId ~= myPlaceId then
+        setStatus("ojo: estás en el place " .. myPlaceId .. ", no en " .. targetPlaceId, "warn")
+    end
 end)
 
 placeBox:GetPropertyChangedSignal("Text"):Connect(function()
