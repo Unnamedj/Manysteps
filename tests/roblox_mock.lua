@@ -93,7 +93,7 @@ end
 local function newInstance(className)
     local events = {}
     local propertySignals = {}
-    local instance
+    local instance -- se asigna abajo; Destroy la necesita para sacarse del registro
 
     local fields = {
         ClassName = className,
@@ -101,6 +101,7 @@ local function newInstance(className)
         Text = "",
         Visible = true,
         Parent = nil,
+        __children = {},
     }
 
     local proxy = setmetatable({}, {
@@ -116,7 +117,20 @@ local function newInstance(className)
 
             if key == "Destroy" then
                 return function()
+                    -- Fuera del registro, y con sus descendientes: si no,
+                    -- las búsquedas seguirían encontrando el texto de
+                    -- filas que la UI ya ha tirado, y las pruebas darían
+                    -- por bueno lo que ya no se ve.
                     fields.__destroyed = true
+                    for _, child in ipairs(fields.__children) do
+                        child:Destroy()
+                    end
+                    for index, other in ipairs(mock.instances) do
+                        if rawequal(other, instance) then
+                            table.remove(mock.instances, index)
+                            break
+                        end
+                    end
                 end
             end
 
@@ -138,6 +152,11 @@ local function newInstance(className)
         end,
 
         __newindex = function(_, key, value)
+            -- Al colgar de un padre nos apuntamos en sus hijos, para que
+            -- Destroy pueda llevárselos por delante como en Roblox.
+            if key == "Parent" and type(value) == "table" and value.__fields then
+                table.insert(value.__fields.__children, instance)
+            end
             fields[key] = value
             local signal = propertySignals[key]
             if signal then

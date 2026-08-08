@@ -167,6 +167,19 @@ Un Job ID solo vale dentro de su propio juego, así que si el Place ID
 configurado es otro, el mando te avisa en la barra de estado en vez de
 dejarte mandar gente a un sitio que no existe.
 
+### Elegir a qué bridge le hablas
+
+El mando lleva su propia columna de bridges, a la derecha, con la misma
+idea que la web: **Todos** arriba y debajo cada operador con sus
+jugadores y su reloj.
+
+Al pulsar uno, las órdenes van solo a él y la lista de jugadores se queda
+con los que ese ve. Si se cae, vuelve solo a *todos*, para que no te
+quedes mandando a un sitio que ya no existe.
+
+Los teleports siguen yendo por el bridge que ve a cada jugador, elijas lo
+que elijas: puedes seleccionar gente de varias partidas y sale bien.
+
 - `RightControl` muestra u oculta la ventana.
 - La barra de título la arrastra; el `_` la pliega.
 - `getgenv().MANYSTEPS_CONTROL_STOP()` la cierra del todo.

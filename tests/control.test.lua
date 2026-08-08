@@ -314,6 +314,122 @@ check("y el motivo en la barra de estado",
     mock.findByText("no se pudo hablar con el panel: boom") ~= nil)
 
 ----------------------------------------------------------------------
+print("varios bridges")
+
+--- Tres operadores en partidas distintas, cada uno con sus jugadores.
+local function multiState(overrides)
+    local state = stateWith()
+    state.online = 3
+    state.bridges = {
+        {
+            id = "1001", username = "opA", online = true, playerCount = 2,
+            panelJobId = "job-de-opA",
+            access = { status = "active", remainingSeconds = 900 },
+        },
+        {
+            id = "1002", username = "opB", online = true, playerCount = 1,
+            panelJobId = "job-de-opB",
+            access = { status = "paused", remainingSeconds = 120 },
+        },
+        {
+            id = "1003", username = "opC", online = true, playerCount = 1,
+            panelJobId = "job-de-opC",
+            access = { status = "locked", remainingSeconds = 0 },
+        },
+    }
+    state.players = {
+        { userId = "5001", username = "nova", displayName = "Nova", bridgeId = "1001", bridgeName = "opA" },
+        { userId = "5002", username = "kiro", displayName = "Kiro", bridgeId = "1001", bridgeName = "opA" },
+        { userId = "5003", username = "lumen", displayName = "Lumen", bridgeId = "1002", bridgeName = "opB" },
+        { userId = "5004", username = "vexel", displayName = "Vexel", bridgeId = "1003", bridgeName = "opC" },
+    }
+    for key, value in pairs(overrides or {}) do
+        state[key] = value
+    end
+    return state
+end
+
+_G.__NEXT_RESPONSE = multiState()
+mock.runSpawned(1)
+
+check("el LED cuenta los bridges", mock.findByText("3 bridges") ~= nil)
+check("hay una fila por bridge más la de todos",
+    mock.findByName("BridgeRow_all") ~= nil
+    and mock.findByName("BridgeRow_1001") ~= nil
+    and mock.findByName("BridgeRow_1002") ~= nil
+    and mock.findByName("BridgeRow_1003") ~= nil)
+
+check("cada fila resume sus jugadores y su reloj",
+    mock.findByText("2j · 15:00") ~= nil and mock.findByText("1j · 2:00") ~= nil,
+    "no están los detalles")
+check("un bridge sin acceso lo dice", mock.findByText("1j · sin acceso") ~= nil)
+
+check("sin filtro salen los cuatro jugadores",
+    mock.findByText("Nova") ~= nil and mock.findByText("Lumen") ~= nil
+    and mock.findByText("Vexel") ~= nil)
+
+check("el reloj de arriba es el del que peor está",
+    mock.findByText("pausado · 2:00") ~= nil)
+
+-- Elegir opA filtra la lista y dirige las órdenes.
+mock.fire(mock.findByName("BridgeRow_1001"), "MouseButton1Click")
+
+check("al elegir uno lo dice", mock.findByText("las órdenes van solo a opA") ~= nil)
+check("la lista se queda con los suyos",
+    mock.findByText("Nova") ~= nil and mock.findByText("Lumen") == nil,
+    "Lumen no debería estar")
+check("y el reloj pasa a ser el suyo", mock.findByText("corriendo · 15:00") ~= nil)
+
+mock.reset()
+mock.fire(mock.findByName("PauseButton"), "MouseButton1Click")
+local directed = mock.lastRequest()
+check("las órdenes llevan ese bridge como destino",
+    directed and directed.body.target == "1001", directed and directed.body.target)
+
+-- El teleport sigue yendo por el bridge que ve a cada jugador.
+mock.reset()
+local rowNova
+for _, row in ipairs(mock.findAllByName("PlayerRow")) do
+    rowNova = rowNova or row
+end
+mock.fire(rowNova, "MouseButton1Click")
+_G.__NEXT_RESPONSE = { accepted = { "x" }, rejected = {} }
+mock.fire(mock.findByName("SendButton"), "MouseButton1Click")
+
+local sent = mock.lastRequest()
+check("cada teleport indica por qué bridge va",
+    sent and sent.body.targets and sent.body.targets[1]
+    and sent.body.targets[1].bridgeId == "1001",
+    sent and sent.body.targets and sent.body.targets[1]
+    and tostring(sent.body.targets[1].bridgeId))
+
+-- Si el bridge elegido se cae, se vuelve a mandar a todos.
+_G.__NEXT_RESPONSE = multiState({
+    online = 2,
+    bridges = {
+        { id = "1002", username = "opB", online = true, playerCount = 1,
+          access = { status = "paused", remainingSeconds = 120 } },
+        { id = "1003", username = "opC", online = true, playerCount = 1,
+          access = { status = "active", remainingSeconds = 600 } },
+    },
+})
+mock.runSpawned(1)
+
+check("si el bridge elegido desaparece, vuelve a todos",
+    mock.findByText("las órdenes van a todos") ~= nil)
+
+mock.reset()
+mock.fire(mock.findByName("PauseButton"), "MouseButton1Click")
+check("y las órdenes vuelven a ir a todos",
+    mock.lastRequest().body.target == "all", mock.lastRequest().body.target)
+
+-- Sin ningún bridge conectado la lista lo dice en vez de quedarse en cero.
+_G.__NEXT_RESPONSE = multiState({ online = 0, bridges = {}, players = {} })
+mock.runSpawned(1)
+check("sin bridges lo dice en la lista", mock.findByText("ninguno conectado") ~= nil)
+check("y el LED también", mock.findByText("sin bridges") ~= nil)
+
+----------------------------------------------------------------------
 print("cierre")
 
 check("deja MANYSTEPS_CONTROL_STOP para poder cerrarlo",

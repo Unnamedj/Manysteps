@@ -207,8 +207,8 @@ end)
 
 local window = new("Frame", {
     Name = "Window",
-    Size = UDim2.fromOffset(586, 424),
-    Position = UDim2.new(0.5, -293, 0.5, -212),
+    Size = UDim2.fromOffset(760, 424),
+    Position = UDim2.new(0.5, -380, 0.5, -212),
     BackgroundColor3 = THEME.bg,
     BorderSizePixel = 0,
     -- Sin esto, al plegar la ventana el contenido se queda flotando
@@ -503,7 +503,7 @@ local rosterCount = label({
     TextSize = 10,
     TextColor3 = THEME.faint,
     TextXAlignment = Enum.TextXAlignment.Right,
-    Position = UDim2.new(1, -104, 0, 58),
+    Position = UDim2.fromOffset(478, 58),
     Size = UDim2.fromOffset(40, 12),
     Parent = window,
 })
@@ -520,7 +520,7 @@ local refreshButton = new("TextButton", {
     BackgroundTransparency = 1,
     AutoButtonColor = false,
     Size = UDim2.fromOffset(40, 14),
-    Position = UDim2.new(1, -58, 0, 57),
+    Position = UDim2.fromOffset(528, 57),
     Parent = window,
 })
 
@@ -594,6 +594,65 @@ local sendButton = new("TextButton", {
     Parent = window,
 })
 corner(8, sendButton)
+
+----------------------------------------------------------------------
+-- columna de bridges
+----------------------------------------------------------------------
+
+caption("BRIDGES", UDim2.fromOffset(588, 58), UDim2.fromOffset(100, 12), window)
+
+local bridgeCountLabel = label({
+    Name = "BridgeCount",
+    Text = "0",
+    Font = Enum.Font.Code,
+    TextSize = 10,
+    TextColor3 = THEME.faint,
+    TextXAlignment = Enum.TextXAlignment.Right,
+    Position = UDim2.fromOffset(690, 58),
+    Size = UDim2.fromOffset(52, 12),
+    Parent = window,
+})
+
+local bridgeList = new("ScrollingFrame", {
+    Name = "BridgeList",
+    Size = UDim2.fromOffset(154, 250),
+    Position = UDim2.fromOffset(588, 76),
+    BackgroundColor3 = THEME.surface,
+    BorderSizePixel = 0,
+    ScrollBarThickness = 3,
+    ScrollBarImageColor3 = THEME.line,
+    CanvasSize = UDim2.new(),
+    AutomaticCanvasSize = Enum.AutomaticSize.Y,
+    Parent = window,
+})
+corner(8, bridgeList)
+stroke(THEME.lineSoft, 1, bridgeList)
+
+new("UIListLayout", {
+    Padding = UDim.new(0, 3),
+    SortOrder = Enum.SortOrder.LayoutOrder,
+    Parent = bridgeList,
+})
+new("UIPadding", {
+    PaddingTop = UDim.new(0, 6),
+    PaddingLeft = UDim.new(0, 6),
+    PaddingRight = UDim.new(0, 6),
+    PaddingBottom = UDim.new(0, 6),
+    Parent = bridgeList,
+})
+
+local targetNote = label({
+    Name = "TargetNote",
+    Text = "las órdenes van a todos",
+    Font = Enum.Font.Code,
+    TextSize = 10,
+    TextColor3 = THEME.faint,
+    TextWrapped = true,
+    TextYAlignment = Enum.TextYAlignment.Top,
+    Position = UDim2.fromOffset(588, 334),
+    Size = UDim2.fromOffset(154, 30),
+    Parent = window,
+})
 
 ----------------------------------------------------------------------
 -- barra de estado
@@ -671,6 +730,14 @@ local pendingPlaceId = nil
 -- el tiempo restante se descuenta aquí entre lecturas.
 local access = nil
 local accessReadAt = 0
+
+-- A qué bridge van las órdenes: "all" o el id de uno concreto.
+local targetBridge = "all"
+local bridgeRows = {}
+local bridgesSignature = ""
+local lastPlayers = {}
+local lastBridges = {}
+local bridgesReadAt = 0
 local placeButtons = {}
 local placesSignature = ""
 
@@ -700,6 +767,7 @@ local function sendCommand(commandType, payload, describeOk)
         local ok, result = httpJson("POST", "/api/command", {
             type = commandType,
             payload = payload or {},
+            target = targetBridge,
         })
         if ok then
             setStatus(describeOk or "orden enviada", "cmd")
@@ -934,9 +1002,27 @@ local function makeRow(entry, order)
     return { instance = row, setSelected = setSelected }
 end
 
-local function renderRoster(list)
+--- Los que se pueden mandar ahora mismo: todos, o solo los que ve el
+--- bridge elegido.
+local function visiblePlayers()
+    if targetBridge == "all" then
+        return lastPlayers
+    end
+
+    local out = {}
+    for _, entry in ipairs(lastPlayers) do
+        if entry.bridgeId == targetBridge then
+            table.insert(out, entry)
+        end
+    end
+    return out
+end
+
+local function renderRoster()
+    local list = visiblePlayers()
+
     playerBridge = {}
-    for _, entry in ipairs(list) do
+    for _, entry in ipairs(lastPlayers) do
         playerBridge[entry.userId] = entry.bridgeId
     end
 
@@ -1086,6 +1172,281 @@ local function renderPlaces(places)
 end
 
 ----------------------------------------------------------------------
+-- lista de bridges
+----------------------------------------------------------------------
+
+local function accessOf(bridge)
+    return bridge and bridge.access or nil
+end
+
+--- Qué reloj enseñar arriba. Con un bridge elegido, el suyo. Con todos,
+--- el que antes se queda sin tiempo — pero mirando solo a los que aún
+--- tienen reloj: uno ya caducado marca 0 y taparía al que corre peligro.
+local function pickAccess()
+    local chosen = nil
+
+    for _, bridge in ipairs(lastBridges) do
+        local bridgeAccess = bridge.online and bridge.access or nil
+        if bridgeAccess and bridgeAccess.status then
+            if targetBridge ~= "all" then
+                if bridge.id == targetBridge then
+                    chosen = bridgeAccess
+                end
+            elseif bridgeAccess.status == "active" or bridgeAccess.status == "paused" then
+                local remaining = tonumber(bridgeAccess.remainingSeconds) or 0
+                if not chosen or remaining < (tonumber(chosen.remainingSeconds) or 0) then
+                    chosen = bridgeAccess
+                end
+            end
+        end
+    end
+
+    -- Si ninguno tiene tiempo corriendo, enseñamos el estado del primero
+    -- que diga algo, aunque sea "sin acceso".
+    if not chosen and targetBridge == "all" then
+        for _, bridge in ipairs(lastBridges) do
+            if bridge.online and bridge.access and bridge.access.status then
+                chosen = bridge.access
+                break
+            end
+        end
+    end
+
+    access = chosen
+    accessReadAt = os.clock()
+end
+
+local function shortClock(bridgeAccess)
+    if not bridgeAccess or not bridgeAccess.status then
+        return "", THEME.faint
+    end
+    if bridgeAccess.status == "active" then
+        return mmss(tonumber(bridgeAccess.remainingSeconds) or 0), THEME.acidDim
+    end
+    if bridgeAccess.status == "paused" then
+        return mmss(tonumber(bridgeAccess.remainingSeconds) or 0), THEME.amber
+    end
+    return ACCESS_LABEL[bridgeAccess.status] or bridgeAccess.status, THEME.red
+end
+
+local function makeBridgeRow(entry, order)
+    local isAll = entry.id == "all"
+
+    local row = new("TextButton", {
+        Name = "BridgeRow_" .. tostring(entry.id),
+        Text = "",
+        AutoButtonColor = false,
+        BackgroundColor3 = THEME.acid,
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        Size = UDim2.new(1, 0, 0, 34),
+        LayoutOrder = order,
+        Parent = bridgeList,
+    })
+    corner(6, row)
+    local border = stroke(THEME.surface, 1, row)
+
+    local dot = new("Frame", {
+        Size = UDim2.fromOffset(6, 6),
+        Position = UDim2.fromOffset(8, 8),
+        BackgroundColor3 = isAll and THEME.blue
+            or (entry.online and THEME.acid or THEME.red),
+        BorderSizePixel = 0,
+        Parent = row,
+    })
+    corner(3, dot)
+
+    label({
+        Text = entry.username or entry.id,
+        Font = Enum.Font.GothamMedium,
+        TextSize = 11,
+        TextColor3 = entry.online and THEME.text or THEME.faint,
+        Position = UDim2.fromOffset(20, 3),
+        Size = UDim2.new(1, -28, 0, 14),
+        Parent = row,
+    })
+
+    local detail, detailColor
+    if isAll then
+        detail, detailColor = entry.detail or "", THEME.faint
+    elseif not entry.online then
+        detail, detailColor = "caído", THEME.red
+    else
+        local clockLabel, clockColor = shortClock(accessOf(entry))
+        local players = tonumber(entry.playerCount) or 0
+        detail = players .. "j"
+        if clockLabel ~= "" then
+            detail = detail .. " · " .. clockLabel
+        end
+        detailColor = clockColor
+    end
+
+    local detailLabel = label({
+        Text = detail,
+        Font = Enum.Font.Code,
+        TextSize = 9,
+        TextColor3 = detailColor,
+        Position = UDim2.fromOffset(20, 18),
+        Size = UDim2.new(1, -28, 0, 12),
+        Parent = row,
+    })
+
+    local function setSelected(isSelected)
+        row.BackgroundTransparency = isSelected and 0.88 or 1
+        border.Color = isSelected and THEME.acid or THEME.surface
+    end
+
+    row.MouseButton1Click:Connect(function()
+        targetBridge = entry.id
+        for id, other in pairs(bridgeRows) do
+            other.setSelected(id == entry.id)
+        end
+        targetNote.Text = entry.id == "all" and "las órdenes van a todos"
+            or ("las órdenes van solo a " .. (entry.username or entry.id))
+        renderRoster()
+        pickAccess()
+        renderClock()
+    end)
+
+    row.MouseEnter:Connect(function()
+        if targetBridge ~= entry.id then
+            border.Color = THEME.line
+        end
+    end)
+    row.MouseLeave:Connect(function()
+        if targetBridge ~= entry.id then
+            border.Color = THEME.surface
+        end
+    end)
+
+    return {
+        instance = row,
+        setSelected = setSelected,
+        setDetail = function(text, color)
+            detailLabel.Text = text
+            detailLabel.TextColor3 = color
+        end,
+    }
+end
+
+--- Refresca solo los textos: el reloj de cada bridge corre aquí, igual
+--- que el de arriba, en vez de saltar cada vez que el panel relee.
+local function refreshBridgeDetails()
+    local onlineCount = 0
+    for _, bridge in ipairs(lastBridges) do
+        if bridge.online then
+            onlineCount = onlineCount + 1
+        end
+    end
+
+    for _, bridge in ipairs(lastBridges) do
+        local row = bridgeRows[bridge.id]
+        if row then
+            if not bridge.online then
+                row.setDetail("caído", THEME.red)
+            else
+                local bridgeAccess = bridge.access
+                local players = tonumber(bridge.playerCount) or 0
+                local detail = players .. "j"
+                local color = THEME.faint
+
+                if bridgeAccess and bridgeAccess.status then
+                    local seconds = tonumber(bridgeAccess.remainingSeconds) or 0
+                    if bridgeAccess.status == "active" then
+                        seconds = math.max(0, seconds - (os.clock() - bridgesReadAt))
+                    end
+
+                    if bridgeAccess.status == "active" then
+                        detail = detail .. " · " .. mmss(seconds)
+                        color = THEME.acidDim
+                    elseif bridgeAccess.status == "paused" then
+                        detail = detail .. " · " .. mmss(seconds)
+                        color = THEME.amber
+                    else
+                        detail = detail .. " · " .. (ACCESS_LABEL[bridgeAccess.status] or bridgeAccess.status)
+                        color = THEME.red
+                    end
+                end
+
+                row.setDetail(detail, color)
+            end
+        end
+    end
+
+    local allRow = bridgeRows["all"]
+    if allRow then
+        allRow.setDetail(
+            onlineCount == 0 and "ninguno conectado"
+                or (onlineCount .. " conectado" .. (onlineCount == 1 and "" or "s")),
+            THEME.faint
+        )
+    end
+end
+
+local function renderBridges(list)
+    list = list or {}
+    lastBridges = list
+
+    local onlineCount = 0
+    for _, bridge in ipairs(list) do
+        if bridge.online then
+            onlineCount = onlineCount + 1
+        end
+    end
+    bridgeCountLabel.Text = onlineCount .. " on"
+
+    -- Si el bridge elegido desaparece, se vuelve a mandar a todos.
+    if targetBridge ~= "all" then
+        local stillThere = false
+        for _, bridge in ipairs(list) do
+            if bridge.id == targetBridge and bridge.online then
+                stillThere = true
+            end
+        end
+        if not stillThere then
+            targetBridge = "all"
+            targetNote.Text = "las órdenes van a todos"
+        end
+    end
+
+    local signature = ""
+    for _, bridge in ipairs(list) do
+        signature = signature .. tostring(bridge.id) .. tostring(bridge.online) .. ";"
+    end
+
+    if signature == bridgesSignature then
+        refreshBridgeDetails()
+        return
+    end
+    bridgesSignature = signature
+
+    for _, row in pairs(bridgeRows) do
+        row.instance:Destroy()
+    end
+    bridgeRows = {}
+
+    local rows = {
+        {
+            id = "all",
+            username = "Todos",
+            online = true,
+            detail = onlineCount .. " conectado" .. (onlineCount == 1 and "" or "s"),
+        },
+    }
+    for _, bridge in ipairs(list) do
+        table.insert(rows, bridge)
+    end
+
+    for index, entry in ipairs(rows) do
+        local row = makeBridgeRow(entry, index)
+        row.setSelected(targetBridge == entry.id)
+        bridgeRows[entry.id] = row
+    end
+
+    refreshBridgeDetails()
+end
+
+----------------------------------------------------------------------
 -- sincronización con el panel
 ----------------------------------------------------------------------
 
@@ -1113,27 +1474,28 @@ local function applyState(state)
         ledText.Text = count .. " bridges"
     end
 
-    -- De todos los conectados enseñamos el que antes se queda sin
-    -- tiempo, que es el que va a dar problemas primero.
-    local worst = nil
-    for _, bridge in ipairs(bridges) do
-        if bridge.online and bridge.access and bridge.access.status then
-            local remaining = tonumber(bridge.access.remainingSeconds) or 0
-            if not worst or remaining < (tonumber(worst.remainingSeconds) or 0) then
-                worst = bridge.access
-            end
-        end
-    end
+    -- Primero la lista: si el bridge elegido se ha caído, ahí se vuelve
+    -- a "todos", y lo de abajo depende de esa decisión.
+    lastPlayers = state.players or {}
+    bridgesReadAt = os.clock()
+    renderBridges(bridges)
+    renderRoster()
 
-    access = worst
-    accessReadAt = os.clock()
+    pickAccess()
     renderClock()
 
+    -- El Job ID que enseñamos es el del bridge elegido; con todos, el
+    -- del primero que lo tenga.
     local panelJobId = nil
     for _, bridge in ipairs(bridges) do
         if bridge.online and bridge.panelJobId then
-            panelJobId = bridge.panelJobId
-            break
+            if targetBridge == "all" then
+                panelJobId = bridge.panelJobId
+                break
+            elseif bridge.id == targetBridge then
+                panelJobId = bridge.panelJobId
+                break
+            end
         end
     end
 
@@ -1178,8 +1540,6 @@ local function applyState(state)
         jobHint.Text = "el panel tiene " .. string.sub(panelJobId, 1, 16) .. "…"
         jobHint.TextColor3 = THEME.amber
     end
-
-    renderRoster(state.players or {})
 
     local entries = state.log or {}
     if #entries > 0 then
@@ -1259,7 +1619,7 @@ local collapsed = false
 minimizeButton.MouseButton1Click:Connect(function()
     collapsed = not collapsed
     TweenService:Create(window, TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-        Size = collapsed and UDim2.fromOffset(586, 46) or UDim2.fromOffset(586, 424),
+        Size = collapsed and UDim2.fromOffset(760, 46) or UDim2.fromOffset(760, 424),
     }):Play()
     minimizeButton.Text = collapsed and "+" or "_"
 end)
@@ -1297,6 +1657,9 @@ task.spawn(function()
     while running do
         if access and access.status then
             renderClock()
+        end
+        if #lastBridges > 0 then
+            pcall(refreshBridgeDetails)
         end
         task.wait(1)
     end
