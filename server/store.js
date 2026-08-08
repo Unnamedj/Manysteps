@@ -2,7 +2,10 @@ import { randomUUID } from "node:crypto";
 
 const MAX_LOG = 250;
 const MAX_QUEUE = 200;
-const BRIDGE_TIMEOUT_MS = 15_000;
+// Holgado a propósito: el long-poll ya tarda hasta 15 s en volver, así
+// que un margen justo daría desconexiones falsas — y una desconexión
+// cancela lo que haya en cola.
+const BRIDGE_TIMEOUT_MS = 28_000;
 
 /**
  * Estado central del panel. Vive en memoria: Railway reinicia el contenedor

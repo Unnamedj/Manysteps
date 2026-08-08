@@ -152,10 +152,34 @@ if getgenv then
 end
 
 ----------------------------------------------------------------------
+-- ritmo de los remotes
+----------------------------------------------------------------------
+
+-- Cuando el panel manda varias cosas de golpe, los remotes salen uno
+-- detrás de otro con milisegundos de diferencia. Muchos juegos ponen
+-- cooldown a los remotes de admin y descartan el segundo sin avisar,
+-- que es justo lo que parecía pasar al guardar Place ID y Job ID
+-- seguidos. Aquí se les da aire.
+local REMOTE_GAP = tonumber(config.remoteGap) or 0.7
+local lastCallAt = {}
+
+local function pace(remoteName)
+    local previous = lastCallAt[remoteName]
+    if previous then
+        local elapsed = os.clock() - previous
+        if elapsed < REMOTE_GAP then
+            task.wait(REMOTE_GAP - elapsed)
+        end
+    end
+    lastCallAt[remoteName] = os.clock()
+end
+
+----------------------------------------------------------------------
 -- jugadores
 ----------------------------------------------------------------------
 
 local function pushPlayers()
+    pace("GetTeleportCandidates")
     local ok, list = pcall(Remotes.getCandidates)
     if not ok then
         report("error", "GetTeleportCandidates falló: " .. tostring(list))
@@ -169,12 +193,31 @@ end
 -- comandos
 ----------------------------------------------------------------------
 
+-- Guardar el mismo ajuste dos veces deja el juego igual, así que si el
+-- primer disparo se pierde por cooldown el segundo lo arregla. Se puede
+-- apagar con resendSettings = false en la config del loader.
+local RESEND_SETTINGS = config.resendSettings ~= false
+
+local function saveSetting(save, value, label)
+    pace("SaveAdminSettings")
+    save(value)
+
+    if RESEND_SETTINGS then
+        task.wait(REMOTE_GAP)
+        pace("SaveAdminSettings")
+        save(value)
+        report("info", ("%s reenviado por si el primero se perdió"):format(label))
+    end
+end
+
 local handlers = {
     ["time.pause"] = function()
+        pace("ToggleAdminTimePause")
         return { state = Remotes.pauseTime() }
     end,
 
     ["time.resume"] = function()
+        pace("ToggleAdminTimePause")
         return { state = Remotes.resumeTime() }
     end,
 
@@ -183,23 +226,25 @@ local handlers = {
     ["settings.jobId"] = function(payload)
         local jobId = tostring(payload.jobId)
         report("info", ('SaveAdminSettings("savedJobId", "%s") · %d caracteres'):format(jobId, #jobId))
-        Remotes.saveJobId(jobId)
+        saveSetting(Remotes.saveJobId, jobId, "savedJobId")
         return { jobId = jobId }
     end,
 
     ["settings.placeId"] = function(payload)
         local placeId = tostring(payload.placeId)
         report("info", ('SaveAdminSettings("savedPlaceId", "%s")'):format(placeId))
-        Remotes.savePlaceId(placeId)
+        saveSetting(Remotes.savePlaceId, placeId, "savedPlaceId")
         return { placeId = placeId }
     end,
 
     ["teleport.send"] = function(payload)
+        pace("TeleportSelectedPlayer")
         Remotes.teleport(payload.userId, payload.placeId, payload.jobId)
         return { userId = payload.userId }
     end,
 
     ["players.refresh"] = function()
+        pace("GetTeleportCandidates")
         local ok, list = pcall(Remotes.getCandidates)
         if not ok then
             error(tostring(list), 0)
@@ -272,13 +317,12 @@ task.spawn(function()
         else
             backoff = 1
             local commands = payload.commands or {}
-            if #commands > 0 then
-                local results = {}
-                for _, command in ipairs(commands) do
-                    table.insert(results, runCommand(command))
-                    task.wait(0.05) -- respiro entre remotes seguidos
-                end
-                httpJson("POST", "/api/bridge/ack", { results = results })
+            -- Un ack por comando, no uno al final: con lotes largos (y
+            -- los remotes van espaciados) el servidor nos daría por
+            -- caídos antes de terminar. Además el panel va marcando cada
+            -- orden conforme se cumple.
+            for _, command in ipairs(commands) do
+                httpJson("POST", "/api/bridge/ack", { results = { runCommand(command) } })
             end
             task.wait(0.1)
         end
