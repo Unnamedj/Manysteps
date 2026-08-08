@@ -118,6 +118,8 @@ app.get("/api/control/state", requirePanelAuth, (_req, res) => {
       jobId: state.bridge.jobId,
     },
     time: state.time,
+    access: state.access,
+    places: state.places,
     settings: { placeId: state.settings.placeId, jobId: state.settings.jobId },
     game: { panelJobId: state.game.panelJobId },
     players: state.players.list,

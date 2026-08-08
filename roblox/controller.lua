@@ -195,6 +195,12 @@ local function readGameState()
         state.rememberPlaceId = settings.rememberPlaceId
     end
 
+    pace("GetAccessStatus")
+    local accessOk, access = pcall(Remotes.getAccessStatus)
+    if accessOk and type(access) == "table" then
+        state.access = access
+    end
+
     return state
 end
 

@@ -30,6 +30,11 @@ local function stateWith(overrides)
             { userId = "2481", username = "kiro", displayName = "Kiro" },
         },
         pending = 0,
+        access = { status = "active", remainingSeconds = 754, readAt = 1 },
+        places = {
+            { label = "SAB New Player", placeId = "96342491571673" },
+            { label = "SAB Normal", placeId = "109983668079237" },
+        },
         log = { { at = 1, level = "ok", message = "Bridge conectado" } },
     }
 
@@ -49,6 +54,9 @@ getgenv().MANYSTEPS_CONFIG = { url = "https://panel.example/", key = "clave-secr
 local chunk = assert(load(CONTROL_SRC, "control"))
 local loaded, loadError = pcall(chunk)
 check("el script arranca sin errores", loaded, loadError)
+
+local jobBox = mock.findByName("JOBIDBox")
+local placeBox = mock.findByName("PLACEIDBox")
 
 ----------------------------------------------------------------------
 print("conexión con el panel")
@@ -88,6 +96,52 @@ check("la barra de estado repite el último log",
     mock.findByText("Bridge conectado") ~= nil)
 
 ----------------------------------------------------------------------
+print("reloj de acceso")
+
+check("muestra cuánto queda, en minutos y segundos",
+    mock.findByText("corriendo · 12:34") ~= nil)
+
+_G.__NEXT_RESPONSE = stateWith({ access = { status = "paused", remainingSeconds = 65 } })
+mock.runSpawned(1)
+check("pausado también dice lo que queda", mock.findByText("pausado · 1:05") ~= nil)
+
+_G.__NEXT_RESPONSE = stateWith({ access = { status = "locked", remainingSeconds = 0 } })
+mock.runSpawned(1)
+check("sin acceso lo dice sin reloj", mock.findByText("sin acceso") ~= nil)
+
+_G.__NEXT_RESPONSE = stateWith({ access = { status = "active", remainingSeconds = 7265 } })
+mock.runSpawned(1)
+check("más de una hora sale con horas", mock.findByText("corriendo · 2:01:05") ~= nil)
+
+_G.__NEXT_RESPONSE = stateWith()
+mock.runSpawned(1)
+
+----------------------------------------------------------------------
+print("destinos del juego")
+
+local newPlayer = mock.findByName("Place_96342491571673")
+local normal = mock.findByName("Place_109983668079237")
+check("hay un atajo por cada destino del juego",
+    newPlayer ~= nil and normal ~= nil)
+check("con la etiqueta sin el prefijo SAB",
+    newPlayer and newPlayer.Text == "New Player", newPlayer and newPlayer.Text)
+
+mock.reset()
+mock.fire(normal, "MouseButton1Click")
+local picked = mock.lastRequest()
+check("al pulsar uno manda ese Place ID",
+    picked and picked.body.type == "settings.placeId"
+    and picked.body.payload.placeId == "109983668079237",
+    picked and tostring(picked.body.payload and picked.body.payload.placeId))
+check("y lo deja escrito en el campo",
+    placeBox.Text == "109983668079237", placeBox.Text)
+
+-- Devolvemos el destino a como estaba.
+_G.__NEXT_RESPONSE = stateWith()
+mock.runSpawned(1)
+placeBox.Text = "96342491571673"
+
+----------------------------------------------------------------------
 print("botones de tiempo")
 
 mock.reset()
@@ -109,9 +163,6 @@ check("Reanudar manda time.resume",
 ----------------------------------------------------------------------
 print("campos de destino")
 
--- El TextBox del Job ID es el que tiene el placeholder del Job ID.
-local jobBox = mock.findByName("JOBIDBox")
-local placeBox = mock.findByName("PLACEIDBox")
 check("hay un cuadro para el Job ID y otro para el Place ID",
     jobBox ~= nil and placeBox ~= nil)
 

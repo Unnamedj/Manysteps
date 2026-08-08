@@ -34,6 +34,14 @@ const state = {
     status: "unknown",
     changedAt: 0,
   },
+  // Lo que cuenta GetAccessStatus: estado y segundos que quedan de
+  // acceso. readAt permite descontar el tiempo en el navegador entre
+  // lecturas, que el bridge solo pregunta cada veinte segundos.
+  access: {
+    status: null, // blacklisted | permanent | paused | active | locked
+    remainingSeconds: 0,
+    readAt: 0,
+  },
   players: {
     list: [],
     updatedAt: 0,
@@ -338,6 +346,14 @@ export function setPlayers(rawList) {
 /* snapshot                                                            */
 /* ------------------------------------------------------------------ */
 
+const ACCESS_STATES = new Set(["blacklisted", "permanent", "paused", "active", "locked"]);
+
+/** Los destinos que ofrece el propio panel del juego. */
+export const PLACES = [
+  { label: "SAB New Player", placeId: "96342491571673" },
+  { label: "SAB Normal", placeId: "109983668079237" },
+];
+
 export function setGameState(raw) {
   if (!raw || typeof raw !== "object") return;
 
@@ -351,6 +367,24 @@ export function setGameState(raw) {
     rememberPlaceId: raw.rememberPlaceId === undefined ? null : raw.rememberPlaceId === true,
     updatedAt: Date.now(),
   };
+
+  // El estado real del reloj manda sobre lo que dedujimos del último
+  // botón pulsado: esto viene del servidor del juego.
+  const access = raw.access;
+  if (access && ACCESS_STATES.has(access.status)) {
+    state.access = {
+      status: access.status,
+      remainingSeconds: Math.max(0, Number(access.remainingSeconds) || 0),
+      readAt: Date.now(),
+    };
+
+    if (access.status === "paused") {
+      state.time = { status: "paused", changedAt: state.time.changedAt || Date.now() };
+    } else if (access.status === "active" || access.status === "permanent") {
+      state.time = { status: "running", changedAt: state.time.changedAt || Date.now() };
+    }
+  }
+
   emitSnapshot();
 }
 
@@ -360,6 +394,8 @@ export function snapshot() {
     bridge: { ...state.bridge },
     settings: { ...state.settings },
     time: { ...state.time },
+    access: { ...state.access },
+    places: PLACES,
     players: { ...state.players },
     game: { ...state.game },
     pending: queue.length + inflight.size,

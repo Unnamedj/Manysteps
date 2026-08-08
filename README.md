@@ -33,7 +33,17 @@ con el mismo servidor, así que se ven el uno al otro en tiempo real.
 | Enviar teleport | `TeleportSelectedPlayer:FireServer(userId, placeId, jobId)` |
 | Listar jugadores | `GetTeleportCandidates:InvokeServer()` |
 | Leer los ajustes | `GetAdminSettings:InvokeServer()` |
+| Estado del acceso | `GetAccessStatus:InvokeServer()` |
 | Resultado del teleport | `TeleportSelectedPlayerResult.OnClientEvent` |
+
+El panel y el mando muestran el **tiempo de acceso que queda**, tal y
+como lo cuenta el servidor del juego (`GetAccessStatus`), y no lo que
+dedujimos del último botón pulsado. La cuenta atrás corre en el cliente
+entre lecturas.
+
+Los **destinos** del propio panel del juego (`SAB New Player` y
+`SAB Normal`) están como atajos junto al Place ID, para no tener que
+recordar los números.
 
 Los teleports se pueden mandar a varios jugadores de una tanda: se
 seleccionan en la lista y se encola un comando por cada uno.

@@ -305,6 +305,19 @@ local ledText = label({
     Parent = ledHolder,
 })
 
+-- Reloj de acceso: lo que queda de tiempo, según el propio servidor.
+local clockText = label({
+    Name = "ClockLabel",
+    Text = "",
+    Font = Enum.Font.Code,
+    TextSize = 11,
+    TextColor3 = THEME.faint,
+    TextXAlignment = Enum.TextXAlignment.Right,
+    Position = UDim2.new(1, -374, 0, 10),
+    Size = UDim2.fromOffset(130, 26),
+    Parent = titleBar,
+})
+
 local function iconButton(text, offsetX, parent)
     local button = new("TextButton", {
         Text = text,
@@ -653,6 +666,13 @@ local applyingState = false
 local pendingJobId = nil
 local pendingPlaceId = nil
 
+-- Último GetAccessStatus que nos pasó el panel, y cuándo lo recibimos:
+-- el tiempo restante se descuenta aquí entre lecturas.
+local access = nil
+local accessReadAt = 0
+local placeButtons = {}
+local placesSignature = ""
+
 local function selectionCount()
     local count = 0
     for _ in pairs(selected) do
@@ -948,6 +968,111 @@ local function renderRoster(list)
 end
 
 ----------------------------------------------------------------------
+-- reloj de acceso y destinos
+----------------------------------------------------------------------
+
+local ACCESS_LABEL = {
+    active = "corriendo",
+    paused = "pausado",
+    permanent = "permanente",
+    locked = "sin acceso",
+    blacklisted = "bloqueado",
+}
+
+local function mmss(seconds)
+    local total = math.max(0, math.floor(seconds + 0.5))
+    local hours = math.floor(total / 3600)
+    local minutes = math.floor((total % 3600) / 60)
+    local secs = total % 60
+
+    if hours > 0 then
+        return ("%d:%02d:%02d"):format(hours, minutes, secs)
+    end
+    return ("%d:%02d"):format(minutes, secs)
+end
+
+local function renderClock()
+    if not access or not access.status then
+        clockText.Text = ""
+        return
+    end
+
+    local label = ACCESS_LABEL[access.status] or access.status
+    if access.status == "active" or access.status == "paused" then
+        -- Solo corre el reloj cuando el tiempo está corriendo de verdad.
+        local elapsed = access.status == "active" and (os.clock() - accessReadAt) or 0
+        local left = math.max(0, (tonumber(access.remainingSeconds) or 0) - elapsed)
+        clockText.Text = label .. " · " .. mmss(left)
+    else
+        clockText.Text = label
+    end
+
+    if access.status == "paused" then
+        clockText.TextColor3 = THEME.amber
+    elseif access.status == "active" or access.status == "permanent" then
+        clockText.TextColor3 = THEME.acid
+    else
+        clockText.TextColor3 = THEME.red
+    end
+end
+
+--- Atajos a los destinos que ofrece el propio panel del juego, en el
+--- sitio donde antes solo había un "listo" que no decía gran cosa.
+local function renderPlaces(places)
+    places = places or {}
+
+    local signature = ""
+    for _, place in ipairs(places) do
+        signature = signature .. tostring(place.placeId) .. ","
+    end
+
+    if signature ~= placesSignature then
+        placesSignature = signature
+        for _, button in ipairs(placeButtons) do
+            button:Destroy()
+        end
+        placeButtons = {}
+
+        local x = 18
+        for _, place in ipairs(places) do
+            local placeId = tostring(place.placeId)
+            local text = string.gsub(tostring(place.label or placeId), "^SAB%s+", "")
+            local width = math.max(42, #text * 6 + 12)
+
+            local button = new("TextButton", {
+                Name = "Place_" .. placeId,
+                Text = text,
+                Font = Enum.Font.Code,
+                TextSize = 10,
+                TextColor3 = THEME.faint,
+                TextXAlignment = Enum.TextXAlignment.Left,
+                BackgroundTransparency = 1,
+                AutoButtonColor = false,
+                Size = UDim2.fromOffset(width, 14),
+                Position = UDim2.fromOffset(x, 268),
+                Parent = window,
+            })
+
+            button.MouseButton1Click:Connect(function()
+                applyingState = true
+                placeBox.Text = placeId
+                applyingState = false
+                pendingPlaceId = placeId
+                sendCommand("settings.placeId", { placeId = placeId }, "destino → " .. text)
+            end)
+
+            table.insert(placeButtons, button)
+            x = x + width + 8
+        end
+    end
+
+    local current = placeBox.Text:match("^%s*(.-)%s*$")
+    for _, button in ipairs(placeButtons) do
+        button.TextColor3 = button.Name == ("Place_" .. current) and THEME.acid or THEME.faint
+    end
+end
+
+----------------------------------------------------------------------
 -- sincronización con el panel
 ----------------------------------------------------------------------
 
@@ -963,6 +1088,14 @@ local function applyState(state)
     local status = state.time and state.time.status or "unknown"
     pauseBorder.Color = status == "paused" and THEME.amber or THEME.line
     resumeBorder.Color = status == "running" and THEME.acid or THEME.line
+
+    -- El reloj de acceso lo cuenta el servidor del juego; aquí solo se
+    -- guarda para ir descontándolo entre lecturas.
+    access = state.access
+    accessReadAt = os.clock()
+    renderClock()
+
+    renderPlaces(state.places)
 
     local panelJobId = state.game and state.game.panelJobId or nil
     local savedPlaceId = state.settings and state.settings.placeId or nil
@@ -1004,10 +1137,6 @@ local function applyState(state)
         jobHint.Text = "el panel tiene " .. string.sub(panelJobId, 1, 16) .. "…"
         jobHint.TextColor3 = THEME.amber
     end
-
-    placeHint.Text = state.pending and state.pending > 0
-        and (state.pending .. " en cola")
-        or "listo"
 
     renderRoster(state.players or {})
 
@@ -1120,6 +1249,17 @@ UserInputService.InputBegan:Connect(function(input, processed)
 end)
 
 ----------------------------------------------------------------------
+
+-- La cuenta atrás corre aquí: el panel solo relee el juego de tanto en
+-- tanto, y un reloj que salta de veinte en veinte segundos no es reloj.
+task.spawn(function()
+    while running do
+        if access and access.status then
+            renderClock()
+        end
+        task.wait(1)
+    end
+end)
 
 -- Latido del LED, para que se note que el mando sigue vivo.
 task.spawn(function()

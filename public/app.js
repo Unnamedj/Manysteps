@@ -21,6 +21,7 @@ const el = {
   placeForm: $("placeForm"),
   placeInput: $("placeInput"),
   placeHint: $("placeHint"),
+  places: $("places"),
   jobForm: $("jobForm"),
   jobInput: $("jobInput"),
   jobHint: $("jobHint"),
@@ -204,10 +205,9 @@ function applySnapshot(state) {
     : "desconectado";
 
   // reloj del juego
+  renderClock();
+  renderPlaces(state.places || []);
   const time = state.time.status;
-  el.clockChip.dataset.state = time === "unknown" ? "unknown" : time;
-  el.clockValue.textContent =
-    time === "paused" ? "pausado" : time === "running" ? "corriendo" : "sin datos";
 
   document
     .querySelector('.bigbtn[data-cmd="time.pause"]')
@@ -241,6 +241,86 @@ function applySnapshot(state) {
 
   renderRoster();
   renderDestination();
+}
+
+const ACCESS_LABEL = {
+  active: "corriendo",
+  paused: "pausado",
+  permanent: "permanente",
+  locked: "sin acceso",
+  blacklisted: "bloqueado",
+};
+
+function mmss(seconds) {
+  const total = Math.max(0, Math.round(seconds));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  const pad = (n) => String(n).padStart(2, "0");
+  return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
+}
+
+/**
+ * Estado del reloj. Si el bridge ha leído GetAccessStatus usamos eso,
+ * que es la verdad del servidor; si no, lo que dedujimos del último
+ * comando. El tiempo restante se descuenta aquí entre lecturas.
+ */
+function renderClock() {
+  const access = snapshot?.access;
+  const time = snapshot?.time?.status ?? "unknown";
+
+  if (!access?.status) {
+    el.clockChip.dataset.state = time === "unknown" ? "unknown" : time;
+    el.clockValue.textContent =
+      time === "paused" ? "pausado" : time === "running" ? "corriendo" : "sin datos";
+    return;
+  }
+
+  const running = access.status === "active";
+  const elapsed = running ? (Date.now() - access.readAt) / 1000 : 0;
+  const left = Math.max(0, access.remainingSeconds - elapsed);
+
+  el.clockChip.dataset.state =
+    access.status === "paused"
+      ? "paused"
+      : access.status === "active" || access.status === "permanent"
+        ? "running"
+        : "off";
+
+  const label = ACCESS_LABEL[access.status] ?? access.status;
+  el.clockValue.textContent =
+    access.status === "permanent" || access.status === "locked" || access.status === "blacklisted"
+      ? label
+      : `${label} · ${mmss(left)}`;
+}
+
+function renderPlaces(places) {
+  const current = el.placeInput.value.trim();
+  const signature = places.map((p) => p.placeId).join(",");
+
+  if (el.places.dataset.signature !== signature) {
+    el.places.dataset.signature = signature;
+    el.places.replaceChildren();
+
+    for (const place of places) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = place.label.replace(/^SAB\s+/, "");
+      button.title = `${place.label} · ${place.placeId}`;
+      button.dataset.placeId = place.placeId;
+      button.addEventListener("click", () => {
+        el.placeInput.value = place.placeId;
+        el.placeInput.dataset.dirty = "1";
+        renderPlaces(snapshot?.places || []);
+        renderDestination();
+      });
+      el.places.append(button);
+    }
+  }
+
+  for (const button of el.places.children) {
+    button.dataset.active = button.dataset.placeId === current ? "1" : "0";
+  }
 }
 
 function renderRoster() {
@@ -426,6 +506,7 @@ el.placeForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   await send("settings.placeId", { placeId: el.placeInput.value.trim() }).catch(() => {});
   delete el.placeInput.dataset.dirty;
+  renderPlaces(snapshot?.places || []);
   renderDestination();
 });
 
@@ -453,6 +534,7 @@ el.useCurrentJob.addEventListener("click", () => {
 for (const input of [el.placeInput, el.jobInput]) {
   input.addEventListener("input", () => {
     input.dataset.dirty = "1";
+    renderPlaces(snapshot?.places || []);
     renderDestination();
   });
 }
@@ -535,6 +617,12 @@ el.copyControl.addEventListener("click", () => copy(el.controlCode.textContent, 
 setInterval(() => {
   if (snapshot?.bridge) el.metaPing.textContent = ago(snapshot.bridge.lastSeen);
 }, 5000);
+
+// La cuenta atrás corre en el navegador; el bridge solo relee el estado
+// del juego cada veinte segundos.
+setInterval(() => {
+  if (snapshot?.access?.status) renderClock();
+}, 1000);
 
 (async function boot() {
   try {

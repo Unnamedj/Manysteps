@@ -35,6 +35,13 @@ local REMOTE_NAMES = {
     teleportResult = "TeleportSelectedPlayerResult",
     candidates = "GetTeleportCandidates",
     getSettings = "GetAdminSettings",
+    accessStatus = "GetAccessStatus",
+}
+
+-- Los destinos que el propio panel del juego ofrece.
+Remotes.PLACES = {
+    { label = "SAB New Player", placeId = "96342491571673" },
+    { label = "SAB Normal", placeId = "109983668079237" },
 }
 
 ----------------------------------------------------------------------
@@ -227,6 +234,47 @@ function Remotes.getAdminSettings()
         rememberJobId = raw.rememberJobId == true,
         savedPlaceId = text(raw.savedPlaceId),
         savedJobId = text(raw.savedJobId),
+    }
+end
+
+----------------------------------------------------------------------
+-- estado del acceso
+----------------------------------------------------------------------
+
+--- Estado real del reloj de admin, tal y como lo cuenta el servidor:
+--- `{ status, remainingSeconds, paused, whitelisted, blacklisted }`.
+--- Mucho mejor que deducir si está pausado por el último botón pulsado.
+function Remotes.getAccessStatus()
+    local raw = getRemote(REMOTE_NAMES.accessStatus):InvokeServer()
+    if type(raw) ~= "table" then
+        return nil
+    end
+
+    local remaining = math.max(0, tonumber(raw.remainingSeconds) or 0)
+    local permanent = raw.permanentlyWhitelisted == true or raw.whitelisted == true
+    local blacklisted = raw.blacklisted == true
+    local paused = raw.paused == true
+
+    -- El mismo orden de prioridades que usa el panel del juego.
+    local status
+    if blacklisted then
+        status = "blacklisted"
+    elseif permanent then
+        status = "permanent"
+    elseif paused and remaining > 0 then
+        status = "paused"
+    elseif remaining > 0 then
+        status = "active"
+    else
+        status = "locked"
+    end
+
+    return {
+        status = status,
+        remainingSeconds = remaining,
+        paused = paused,
+        permanent = permanent,
+        blacklisted = blacklisted,
     }
 end
 
