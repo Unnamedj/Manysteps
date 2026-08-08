@@ -38,6 +38,16 @@ const state = {
     list: [],
     updatedAt: 0,
   },
+  // Lo que el juego tiene de verdad, leído por el bridge. El cuadro del
+  // panel manda sobre lo guardado: es lo que usa el botón Teleport.
+  game: {
+    panelJobId: null,
+    savedJobId: null,
+    savedPlaceId: null,
+    rememberJobId: null,
+    rememberPlaceId: null,
+    updatedAt: 0,
+  },
 };
 
 /** @type {Array<object>} comandos esperando a que el bridge los recoja */
@@ -328,6 +338,22 @@ export function setPlayers(rawList) {
 /* snapshot                                                            */
 /* ------------------------------------------------------------------ */
 
+export function setGameState(raw) {
+  if (!raw || typeof raw !== "object") return;
+
+  const read = (value) => (value === undefined || value === null ? null : String(value));
+
+  state.game = {
+    panelJobId: read(raw.panelJobId),
+    savedJobId: read(raw.savedJobId),
+    savedPlaceId: read(raw.savedPlaceId),
+    rememberJobId: raw.rememberJobId === undefined ? null : raw.rememberJobId === true,
+    rememberPlaceId: raw.rememberPlaceId === undefined ? null : raw.rememberPlaceId === true,
+    updatedAt: Date.now(),
+  };
+  emitSnapshot();
+}
+
 export function snapshot() {
   return {
     serverTime: Date.now(),
@@ -335,6 +361,7 @@ export function snapshot() {
     settings: { ...state.settings },
     time: { ...state.time },
     players: { ...state.players },
+    game: { ...state.game },
     pending: queue.length + inflight.size,
     history: history.slice(0, 20).map((c) => ({
       id: c.id,

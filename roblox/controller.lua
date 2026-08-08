@@ -178,6 +178,26 @@ end
 -- jugadores
 ----------------------------------------------------------------------
 
+-- Lo que el juego tiene ahora mismo, para que el panel muestre la
+-- realidad en vez de lo último que creímos haber mandado.
+local function readGameState()
+    local state = {}
+
+    local boxOk, boxValue = pcall(Remotes.getPanelJobId)
+    state.panelJobId = boxOk and boxValue or nil
+
+    pace("GetAdminSettings")
+    local settingsOk, settings = pcall(Remotes.getAdminSettings)
+    if settingsOk and type(settings) == "table" then
+        state.savedJobId = settings.savedJobId
+        state.savedPlaceId = settings.savedPlaceId
+        state.rememberJobId = settings.rememberJobId
+        state.rememberPlaceId = settings.rememberPlaceId
+    end
+
+    return state
+end
+
 local function pushPlayers()
     pace("GetTeleportCandidates")
     local ok, list = pcall(Remotes.getCandidates)
@@ -185,30 +205,13 @@ local function pushPlayers()
         report("error", "GetTeleportCandidates falló: " .. tostring(list))
         return false, tostring(list)
     end
-    httpJson("POST", "/api/bridge/players", { players = list })
+    httpJson("POST", "/api/bridge/players", { players = list, game = readGameState() })
     return true, list
 end
 
 ----------------------------------------------------------------------
 -- comandos
 ----------------------------------------------------------------------
-
--- Guardar el mismo ajuste dos veces deja el juego igual, así que si el
--- primer disparo se pierde por cooldown el segundo lo arregla. Se puede
--- apagar con resendSettings = false en la config del loader.
-local RESEND_SETTINGS = config.resendSettings ~= false
-
-local function saveSetting(save, value, label)
-    pace("SaveAdminSettings")
-    save(value)
-
-    if RESEND_SETTINGS then
-        task.wait(REMOTE_GAP)
-        pace("SaveAdminSettings")
-        save(value)
-        report("info", ("%s reenviado por si el primero se perdió"):format(label))
-    end
-end
 
 local handlers = {
     ["time.pause"] = function()
@@ -221,19 +224,33 @@ local handlers = {
         return { state = Remotes.resumeTime() }
     end,
 
-    -- Los dos ajustes van con eco al log: si el juego no se entera del
-    -- cambio, lo primero es saber qué salió exactamente por el remote.
+    -- Dos pasos, y el orden importa: primero el cuadro del panel, que es
+    -- lo que se ve y lo que lee el botón Teleport del juego, y después
+    -- el ajuste guardado, que solo se relee al reabrir el panel.
     ["settings.jobId"] = function(payload)
         local jobId = tostring(payload.jobId)
-        report("info", ('SaveAdminSettings("savedJobId", "%s") · %d caracteres'):format(jobId, #jobId))
-        saveSetting(Remotes.saveJobId, jobId, "savedJobId")
-        return { jobId = jobId }
+
+        local wroteBox, boxError = pcall(Remotes.setPanelJobId, jobId)
+        if wroteBox then
+            report("ok", ("Job ID del panel → %s"):format(jobId))
+        else
+            report("warn", "No se pudo escribir en el panel: " .. tostring(boxError))
+        end
+
+        pace("SaveAdminSettings")
+        Remotes.saveJobId(jobId)
+
+        if not wroteBox then
+            -- Sin el cuadro, lo guardado no llega a aplicarse solo.
+            error(tostring(boxError), 0)
+        end
+        return { jobId = jobId, panel = Remotes.getPanelJobId() }
     end,
 
     ["settings.placeId"] = function(payload)
         local placeId = tostring(payload.placeId)
-        report("info", ('SaveAdminSettings("savedPlaceId", "%s")'):format(placeId))
-        saveSetting(Remotes.savePlaceId, placeId, "savedPlaceId")
+        pace("SaveAdminSettings")
+        Remotes.savePlaceId(placeId)
         return { placeId = placeId }
     end,
 
@@ -290,6 +307,26 @@ if not ok then
 end
 print_("conectado a " .. BASE_URL)
 report("ok", "Bridge listo en JobId " .. tostring(game.JobId))
+
+-- El juego contesta a cada teleport por su cuenta. Sin escucharlo, el
+-- panel diría "hecho" con solo haber disparado el remote.
+local listening, listenError = pcall(Remotes.onTeleportResult, function(result)
+    if result.success then
+        report("ok", ("Teleport de %s aceptado%s"):format(
+            result.userId,
+            result.message ~= "" and (": " .. result.message) or ""
+        ))
+    else
+        report("error", ("Teleport de %s rechazado: %s"):format(
+            result.userId,
+            result.message ~= "" and result.message or "sin motivo"
+        ))
+    end
+end)
+
+if not listening then
+    report("warn", "Sin resultados de teleport: " .. tostring(listenError))
+end
 
 ----------------------------------------------------------------------
 -- bucles

@@ -15,18 +15,26 @@
 --]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
 
 local Remotes = {}
-Remotes.VERSION = "1.0.0"
+Remotes.VERSION = "1.1.0"
 
 local FOLDER_NAME = "AdminEvents"
 local WAIT_TIMEOUT = 10
+
+-- El cuadro de texto del panel del juego. Es la fuente de la verdad del
+-- teleport: el botón del propio panel manda JobIDBox.Text, mientras que
+-- savedJobId solo se relee al abrir el panel.
+local JOB_BOX_NAME = "JobIDBox"
 
 local REMOTE_NAMES = {
     togglePause = "ToggleAdminTimePause",
     saveSettings = "SaveAdminSettings",
     teleport = "TeleportSelectedPlayer",
+    teleportResult = "TeleportSelectedPlayerResult",
     candidates = "GetTeleportCandidates",
+    getSettings = "GetAdminSettings",
 }
 
 ----------------------------------------------------------------------
@@ -102,7 +110,14 @@ function Remotes.toggleTime(mode)
         [1] = mode,
         n = 1,
     }
-    return getRemote(REMOTE_NAMES.togglePause):InvokeServer(unpack(args, 1, args.n or #args))
+    local result = getRemote(REMOTE_NAMES.togglePause):InvokeServer(unpack(args, 1, args.n or #args))
+
+    -- El juego responde { success = bool, message = string }. Sin esto
+    -- daríamos por hecho un cambio que el servidor acaba de rechazar.
+    if type(result) == "table" and result.success == false then
+        error(tostring(result.message or "el servidor rechazó el cambio de tiempo"), 0)
+    end
+    return result
 end
 
 function Remotes.pauseTime()
@@ -141,8 +156,96 @@ function Remotes.savePlaceId(placeId)
 end
 
 ----------------------------------------------------------------------
+-- el cuadro Job ID del panel del juego
+----------------------------------------------------------------------
+
+local function findJobBox()
+    local player = Players.LocalPlayer
+    if not player then
+        return nil
+    end
+
+    local playerGui = player:FindFirstChildOfClass("PlayerGui")
+    if not playerGui then
+        return nil
+    end
+
+    local box = playerGui:FindFirstChild(JOB_BOX_NAME, true)
+    if box and box:IsA("TextBox") then
+        return box
+    end
+    return nil
+end
+
+--- Escribe el Job ID en el cuadro del panel del juego.
+--- Esto es lo que hace que el cambio se vea y que el botón Teleport del
+--- propio panel use ese destino; saveJobId() solo guarda el ajuste.
+function Remotes.setPanelJobId(jobId)
+    assertString(jobId, "jobId")
+
+    local box = findJobBox()
+    if not box then
+        error("no se encontró el cuadro " .. JOB_BOX_NAME .. " — ¿está abierto el panel?", 0)
+    end
+
+    box.Text = jobId
+    return true
+end
+
+--- Lee lo que hay ahora mismo en el cuadro del panel.
+function Remotes.getPanelJobId()
+    local box = findJobBox()
+    if not box then
+        return nil
+    end
+    return (string.match(box.Text, "^%s*(.-)%s*$"))
+end
+
+----------------------------------------------------------------------
+-- ajustes guardados en el servidor
+----------------------------------------------------------------------
+
+--- Devuelve la tabla de ajustes tal y como los tiene el juego
+--- (rememberJobId, savedJobId, savedPlaceId, …).
+function Remotes.getAdminSettings()
+    local raw = getRemote(REMOTE_NAMES.getSettings):InvokeServer()
+    if type(raw) ~= "table" then
+        return {}
+    end
+
+    -- Ojo con tostring() a secas: si el juego devuelve el Place ID como
+    -- número, un tostring() normal puede escupir notación científica.
+    local function text(value)
+        if type(value) == "number" then
+            return string.format("%.0f", value)
+        end
+        return tostring(value or "")
+    end
+
+    return {
+        rememberPlaceId = raw.rememberPlaceId == true,
+        rememberJobId = raw.rememberJobId == true,
+        savedPlaceId = text(raw.savedPlaceId),
+        savedJobId = text(raw.savedJobId),
+    }
+end
+
+----------------------------------------------------------------------
 -- teleport
 ----------------------------------------------------------------------
+
+--- Avisa de cómo acabó cada teleport. El juego responde por
+--- TeleportSelectedPlayerResult(userId, success, message).
+function Remotes.onTeleportResult(callback)
+    local remote = getRemote(REMOTE_NAMES.teleportResult)
+    return remote.OnClientEvent:Connect(function(userId, success, message)
+        callback({
+            userId = tostring(userId or ""),
+            success = success == true,
+            message = tostring(message or ""),
+        })
+    end)
+end
 
 --- Manda a un jugador al place/servidor indicado.
 function Remotes.teleport(userId, placeId, jobId)

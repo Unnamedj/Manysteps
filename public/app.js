@@ -30,6 +30,7 @@ const el = {
   metaExecutor: $("metaExecutor"),
   metaPlace: $("metaPlace"),
   metaJob: $("metaJob"),
+  metaPanelJob: $("metaPanelJob"),
   metaPing: $("metaPing"),
 
   roster: $("roster"),
@@ -223,10 +224,7 @@ function applySnapshot(state) {
     : "sin guardar todavía";
   el.placeHint.dataset.ok = state.settings.savedPlaceIdAt ? "1" : "0";
 
-  el.jobHint.textContent = state.settings.savedJobIdAt
-    ? `guardado ${ago(state.settings.savedJobIdAt)}`
-    : "sin guardar todavía";
-  el.jobHint.dataset.ok = state.settings.savedJobIdAt ? "1" : "0";
+  const panelJobId = state.game?.panelJobId ?? null;
 
   // sesión
   el.metaUser.textContent = state.bridge.username || "—";
@@ -234,6 +232,8 @@ function applySnapshot(state) {
   el.metaPlace.textContent = state.bridge.placeId || "—";
   el.metaJob.textContent = state.bridge.jobId || "—";
   el.metaJob.title = state.bridge.jobId || "";
+  el.metaPanelJob.textContent = panelJobId || (panelJobId === "" ? "(vacío)" : "—");
+  el.metaPanelJob.title = panelJobId || "";
   el.metaPing.textContent = ago(state.bridge.lastSeen);
 
   renderRoster();
@@ -334,7 +334,33 @@ function rosterItem(player) {
   return item;
 }
 
+// El Job ID que cuenta es el del cuadro del panel del juego, no el que
+// creemos haber mandado. Se recalcula tanto al llegar estado nuevo como
+// mientras se escribe.
+function renderJobHint() {
+  const panelJobId = snapshot?.game?.panelJobId ?? null;
+  const typed = el.jobInput.value.trim();
+
+  if (panelJobId === null) {
+    el.jobHint.textContent = snapshot?.settings?.savedJobIdAt
+      ? `guardado ${ago(snapshot.settings.savedJobIdAt)}`
+      : "sin guardar todavía";
+    el.jobHint.dataset.ok = "0";
+  } else if (panelJobId === "") {
+    el.jobHint.textContent = "el panel del juego lo tiene vacío";
+    el.jobHint.dataset.ok = "0";
+  } else if (panelJobId === typed) {
+    el.jobHint.textContent = "activo en el panel del juego";
+    el.jobHint.dataset.ok = "1";
+  } else {
+    el.jobHint.textContent = `el panel del juego tiene ${panelJobId.slice(0, 18)}…`;
+    el.jobHint.dataset.ok = "0";
+  }
+}
+
 function renderDestination() {
+  renderJobHint();
+
   const placeId = el.placeInput.value.trim() || snapshot?.settings?.placeId || "";
   const jobId = el.jobInput.value.trim() || snapshot?.settings?.jobId || "";
 

@@ -12,6 +12,12 @@ local function makeRemote(name)
             if name == "GetTeleportCandidates" then
                 return _G.__CANDIDATES
             end
+            if name == "GetAdminSettings" then
+                return _G.__SETTINGS
+            end
+            if name == "ToggleAdminTimePause" then
+                return _G.__TOGGLE_RESULT
+            end
             return "server-ok"
         end,
         FireServer = function(self, ...)
@@ -25,7 +31,9 @@ local folder = {
     ToggleAdminTimePause = makeRemote("ToggleAdminTimePause"),
     SaveAdminSettings = makeRemote("SaveAdminSettings"),
     TeleportSelectedPlayer = makeRemote("TeleportSelectedPlayer"),
+    TeleportSelectedPlayerResult = makeRemote("TeleportSelectedPlayerResult"),
     GetTeleportCandidates = makeRemote("GetTeleportCandidates"),
+    GetAdminSettings = makeRemote("GetAdminSettings"),
 }
 folder.FindFirstChild = function(self, name) return self[name] end
 folder.WaitForChild = function(self, name) return self[name] end
@@ -36,10 +44,36 @@ local replicatedStorage = {
     WaitForChild = function(self, name) return self[name] end,
 }
 
+-- El cuadro Job ID del panel del juego, colgando del PlayerGui.
+local jobBox = {
+    __instance = true,
+    Name = "JobIDBox",
+    Text = "",
+    IsA = function(self, class) return class == "TextBox" end,
+}
+
+local playerGui = {
+    __instance = true,
+    FindFirstChild = function(self, name, recursive)
+        if name == "JobIDBox" and recursive then return _G.__JOB_BOX end
+        return nil
+    end,
+}
+_G.__JOB_BOX = jobBox
+
+local localPlayer = {
+    UserId = 1,
+    Name = "tester",
+    FindFirstChildOfClass = function(self, class)
+        if class == "PlayerGui" then return playerGui end
+        return nil
+    end,
+}
+
 game = {
     GetService = function(self, name)
         if name == "ReplicatedStorage" then return replicatedStorage end
-        if name == "Players" then return { LocalPlayer = { UserId = 1, Name = "tester" } } end
+        if name == "Players" then return { LocalPlayer = localPlayer } end
         error("servicio no mockeado: " .. name)
     end,
 }
@@ -134,6 +168,57 @@ check("teleport rechaza userId inválido",
     not pcall(Remotes.teleport, "x", "96342491571673", "job"))
 check("teleport rechaza jobId vacío",
     not pcall(Remotes.teleport, "1", "2", ""))
+
+----------------------------------------------------------------------
+print("cuadro del panel")
+
+Remotes.setPanelJobId("7f3a91c2-8b44-4d1e-9a02-5c6e1d0f4b88")
+check("setPanelJobId escribe en el TextBox del juego",
+    jobBox.Text == "7f3a91c2-8b44-4d1e-9a02-5c6e1d0f4b88", jobBox.Text)
+
+jobBox.Text = "  con-espacios  "
+check("getPanelJobId recorta espacios", Remotes.getPanelJobId() == "con-espacios",
+    Remotes.getPanelJobId())
+
+check("setPanelJobId rechaza vacío", not pcall(Remotes.setPanelJobId, ""))
+
+_G.__JOB_BOX = nil
+local boxOk, boxErr = pcall(Remotes.setPanelJobId, "algo")
+check("sin cuadro avisa de que el panel no está",
+    not boxOk and tostring(boxErr):find("JobIDBox") ~= nil, boxErr)
+check("getPanelJobId sin cuadro devuelve nil", Remotes.getPanelJobId() == nil)
+_G.__JOB_BOX = jobBox
+
+----------------------------------------------------------------------
+print("ajustes del servidor")
+
+_G.__SETTINGS = {
+    rememberJobId = true,
+    rememberPlaceId = false,
+    savedJobId = "abc-123",
+    savedPlaceId = 96342491571673,
+}
+local settings = Remotes.getAdminSettings()
+check("getAdminSettings normaliza la tabla del juego",
+    settings.rememberJobId == true and settings.rememberPlaceId == false
+    and settings.savedJobId == "abc-123" and settings.savedPlaceId == "96342491571673",
+    settings.savedPlaceId)
+
+_G.__SETTINGS = nil
+check("getAdminSettings tolera respuesta vacía",
+    type(Remotes.getAdminSettings()) == "table")
+
+----------------------------------------------------------------------
+print("tiempo rechazado por el servidor")
+
+_G.__TOGGLE_RESULT = { success = false, message = "You cannot teleport anyone while paused." }
+local pauseOk, pauseErr = pcall(Remotes.pauseTime)
+check("un success=false se convierte en error, no en 'hecho'",
+    not pauseOk and tostring(pauseErr):find("cannot teleport") ~= nil, pauseErr)
+
+_G.__TOGGLE_RESULT = { success = true }
+check("success=true pasa sin ruido", (pcall(Remotes.pauseTime)))
+_G.__TOGGLE_RESULT = nil
 
 ----------------------------------------------------------------------
 print("candidatos")

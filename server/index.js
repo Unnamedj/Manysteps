@@ -190,6 +190,7 @@ app.post("/api/bridge/ack", requireBridgeAuth, (req, res) => {
 app.post("/api/bridge/players", requireBridgeAuth, (req, res) => {
   store.touchBridge();
   const list = store.setPlayers(req.body?.players);
+  store.setGameState(req.body?.game);
   res.json({ ok: true, count: list.length });
 });
 

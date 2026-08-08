@@ -17,16 +17,39 @@ del juego los recoge, ejecuta el remote y devuelve el resultado.
 
 ## Qué hace
 
-| Acción | Remote |
+| Acción | Cómo |
 | --- | --- |
 | Pausar / reanudar el tiempo | `ToggleAdminTimePause:InvokeServer("pause"\|"resume")` |
-| Guardar Job ID | `SaveAdminSettings:FireServer("savedJobId", jobId)` |
+| Poner el Job ID | escribe en el cuadro `JobIDBox` del panel **y** `SaveAdminSettings:FireServer("savedJobId", jobId)` |
 | Guardar Place ID | `SaveAdminSettings:FireServer("savedPlaceId", placeId)` |
 | Enviar teleport | `TeleportSelectedPlayer:FireServer(userId, placeId, jobId)` |
 | Listar jugadores | `GetTeleportCandidates:InvokeServer()` |
+| Leer los ajustes | `GetAdminSettings:InvokeServer()` |
+| Resultado del teleport | `TeleportSelectedPlayerResult.OnClientEvent` |
 
 Los teleports se pueden mandar a varios jugadores de una tanda: se
 seleccionan en la lista y se encola un comando por cada uno.
+
+### Por qué el Job ID son dos pasos
+
+En el juego, el Job ID que se usa de verdad es **el texto del cuadro
+`JobIDBox`** del panel: su botón de teleport manda
+`TeleportSelectedPlayer:FireServer(userId, placeId, JobIDBox.Text)`.
+
+`savedJobId` es solo persistencia. El juego lo escribe en el cuadro al
+abrir el panel, y únicamente si el ajuste `rememberJobId` está activado:
+
+```lua
+if settings.rememberJobId then JobIDBox.Text = settings.savedJobId end
+```
+
+Por eso mandar solo `SaveAdminSettings` no cambia nada a la vista. El
+bridge hace las dos cosas: escribe en el cuadro (efecto inmediato) y
+guarda el ajuste (para cuando se reabra el panel). Si quieres que
+persista entre sesiones, activa **Remember Job ID** dentro del juego.
+
+El panel web muestra en todo momento lo que hay en el cuadro, leído del
+juego — no lo último que se mandó.
 
 ## Estructura
 
