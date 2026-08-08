@@ -10,10 +10,18 @@ Panel web (desplegable en Railway) que controla los remotes de
   │  (web)   │ ◄──────── │  (cola +   │ ──────────► │      ↓        │
   └──────────┘   websock │   estado)  │   comandos  │  remotes.lua  │
                          └────────────┘             └──────────────┘
+  ┌──────────┐              ▲     │                        ↓
+  │ control  │ ─────────────┘     └──────────────►  AdminEvents
+  │  (mando) │   mismas órdenes, desde dentro del juego
+  └──────────┘
 ```
 
 El panel nunca habla con Roblox directamente: encola comandos y el script
 del juego los recoge, ejecuta el remote y devuelve el resultado.
+
+Hay dos formas de mandar: **el panel web** y **el mando**, una ventana
+dentro de Roblox que hace lo mismo sin salir del juego. Los dos hablan
+con el mismo servidor, así que se ven el uno al otro en tiempo real.
 
 ## Qué hace
 
@@ -61,9 +69,13 @@ server/          backend Node (Express + WebSocket)
 public/          panel web (sin build, sin dependencias externas)
 roblox/
   remotes.lua    capa de remotes — solo llama a AdminEvents
-  controller.lua puente: pregunta al panel qué hacer y lo ejecuta
-tests/           pruebas de remotes.lua sobre un Roblox mockeado
+  controller.lua bridge: pregunta al panel qué hacer y lo ejecuta
+  control.lua    mando: la consola dibujada dentro de Roblox
+tests/           pruebas de los scripts sobre un Roblox mockeado
 ```
+
+Los tres scripts de Roblox se sirven desde el propio servidor, así que se
+actualizan solos al hacer redeploy: basta con volver a pegar el loader.
 
 ## Desplegar en Railway
 
@@ -94,6 +106,30 @@ loadstring(game:HttpGet("https://TU-APP.up.railway.app/script/loader.lua?key=TU_
 ```
 
 Para detener el bridge sin cerrar Roblox: `getgenv().MANYSTEPS_STOP()`.
+
+## El mando (opcional)
+
+Si prefieres mandar sin salir del juego, el botón **Loader** trae una
+segunda línea, la del mando:
+
+```lua
+loadstring(game:HttpGet("https://TU-APP.up.railway.app/script/loader.lua?key=TU_BRIDGE_KEY&mode=control"))()
+```
+
+Abre una ventana dentro de Roblox con lo mismo que el panel web: pausar y
+reanudar, Place ID y Job ID, la lista de jugadores con selección múltiple
+y el envío por tanda. No toca ningún remote — manda las órdenes al panel,
+igual que el navegador, y el bridge las ejecuta.
+
+Por eso puede correr donde quieras: en otra cuenta, en otro servidor o en
+otro juego. Solo necesita alcanzar el panel.
+
+- `RightControl` muestra u oculta la ventana.
+- La barra de título la arrastra; el `—` la pliega.
+- `getgenv().MANYSTEPS_CONTROL_STOP()` la cierra del todo.
+
+Puedes ejecutar el bridge y el mando en la misma sesión: son
+independientes y no se pisan.
 
 ## Usar los remotes sin panel
 
@@ -126,11 +162,17 @@ PANEL_PASSWORD=test BRIDGE_KEY=test npm run dev
 npm test
 ```
 
-Ejecuta `roblox/remotes.lua` dentro de una VM de Lua con `ReplicatedStorage`
-mockeado y comprueba que cada función dispara el remote correcto con los
-argumentos y tipos exactos (por ejemplo: que el Place ID viaja como texto
-`"96342491571673"` en `SaveAdminSettings` pero como número en
-`TeleportSelectedPlayer`). No hace falta Studio ni un executor.
+Dos suites, las dos sobre una VM de Lua con Roblox mockeado. No hace
+falta Studio ni un executor.
+
+- **remotes.lua** — comprueba que cada función dispara el remote correcto
+  con los argumentos y tipos exactos. Por ejemplo: que el Place ID viaja
+  como texto `"96342491571673"` en `SaveAdminSettings` pero como número
+  en `TeleportSelectedPlayer`.
+- **control.lua** — carga el mando entero con instancias, eventos y HTTP
+  simulados, dispara los clics y mira qué manda al panel: que Pausar
+  encola `time.pause`, que el envío por tanda lleva los jugadores
+  marcados, que un refresco no pisa lo que estás escribiendo.
 
 ## Notas
 

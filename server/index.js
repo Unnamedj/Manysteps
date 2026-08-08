@@ -103,12 +103,40 @@ app.get("/api/state", requirePanelAuth, (_req, res) => {
   res.json({ ...store.snapshot(), log: store.recentLog() });
 });
 
+/**
+ * Estado compacto para el mando de Roblox. El /api/state completo lleva
+ * el log entero, demasiado para pedirlo cada segundo y medio desde el
+ * juego; aquí van solo las últimas líneas.
+ */
+app.get("/api/control/state", requirePanelAuth, (_req, res) => {
+  const state = store.snapshot();
+  res.json({
+    serverTime: state.serverTime,
+    bridge: {
+      online: state.bridge.online,
+      username: state.bridge.username,
+      jobId: state.bridge.jobId,
+    },
+    time: state.time,
+    settings: { placeId: state.settings.placeId, jobId: state.settings.jobId },
+    game: { panelJobId: state.game.panelJobId },
+    players: state.players.list,
+    pending: state.pending,
+    log: store.recentLog().slice(0, 6).map((entry) => ({
+      at: entry.at,
+      level: entry.level,
+      message: entry.message,
+    })),
+  });
+});
+
 app.get("/api/bootstrap", requirePanelAuth, (req, res) => {
   const base = publicBaseUrl(req);
   res.json({
     baseUrl: base,
     bridgeKey: BRIDGE_KEY,
     loader: `loadstring(game:HttpGet("${base}/script/loader.lua?key=${BRIDGE_KEY}"))()`,
+    controlLoader: `loadstring(game:HttpGet("${base}/script/loader.lua?key=${BRIDGE_KEY}&mode=control"))()`,
   });
 });
 
@@ -227,14 +255,17 @@ async function sendLua(res, file, replacements = {}) {
 app.get("/script/loader.lua", (req, res) => {
   const base = publicBaseUrl(req);
   const key = String(req.query.key ?? "").replace(/["\\\n\r]/g, "");
+  const control = req.query.mode === "control";
+  const target = control ? "control.lua" : "controller.lua";
+
   res.type("text/plain; charset=utf-8").send(
     [
-      "-- Manysteps · loader",
+      `-- Manysteps · loader (${control ? "mando" : "bridge"})`,
       "getgenv().MANYSTEPS_CONFIG = {",
       `    url = "${base}",`,
       `    key = "${key}",`,
       "}",
-      `loadstring(game:HttpGet("${base}/script/controller.lua"))()`,
+      `loadstring(game:HttpGet("${base}/script/${target}"))()`,
       "",
     ].join("\n"),
   );
@@ -248,6 +279,11 @@ app.get("/script/controller.lua", (req, res, next) => {
   sendLua(res, "controller.lua", { "@@REMOTES_URL@@": `${publicBaseUrl(req)}/script/remotes.lua` }).catch(
     next,
   );
+});
+
+// El mando: misma consola, pero dibujada dentro de Roblox.
+app.get("/script/control.lua", (_req, res, next) => {
+  sendLua(res, "control.lua").catch(next);
 });
 
 /* ------------------------------------------------------------------ */

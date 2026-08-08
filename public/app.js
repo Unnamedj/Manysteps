@@ -47,8 +47,10 @@ const el = {
   toasts: $("toasts"),
   loaderModal: $("loaderModal"),
   loaderCode: $("loaderCode"),
+  controlCode: $("controlCode"),
   linkBtn: $("linkBtn"),
   copyLoader: $("copyLoader"),
+  copyControl: $("copyControl"),
   closeLoader: $("closeLoader"),
   logoutBtn: $("logoutBtn"),
 };
@@ -149,6 +151,7 @@ async function enterConsole() {
   api("/api/bootstrap")
     .then((info) => {
       el.loaderCode.textContent = info.loader;
+      el.controlCode.textContent = info.controlLoader;
     })
     .catch(() => {});
 
@@ -512,14 +515,18 @@ el.sendBtn.addEventListener("click", async () => {
 
 el.linkBtn.addEventListener("click", () => el.loaderModal.showModal());
 el.closeLoader.addEventListener("click", () => el.loaderModal.close());
-el.copyLoader.addEventListener("click", async () => {
+
+async function copy(text, what) {
   try {
-    await navigator.clipboard.writeText(el.loaderCode.textContent);
-    toast("Loader copiado", "ok");
+    await navigator.clipboard.writeText(text);
+    toast(`${what} copiado`, "ok");
   } catch {
     toast("No se pudo copiar — selecciónalo a mano", "error");
   }
-});
+}
+
+el.copyLoader.addEventListener("click", () => copy(el.loaderCode.textContent, "Loader del bridge"));
+el.copyControl.addEventListener("click", () => copy(el.controlCode.textContent, "Loader del mando"));
 
 /* ------------------------------------------------------------------ */
 /* arranque                                                            */

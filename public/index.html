@@ -280,14 +280,29 @@
 
     <!-- ---------------------------------------------------------- -->
     <dialog class="modal" id="loaderModal">
-      <h3>Cargar el bridge en Roblox</h3>
+      <h3>Cargar en Roblox</h3>
+
+      <p class="modal__label">1 · Bridge — ejecuta los remotes</p>
       <p class="modal__text">
-        Pega esto en tu executor con el juego abierto. El script se conecta a esta
-        consola y queda esperando órdenes.
+        Va en la cuenta que está dentro del juego, con el panel de admin abierto.
+        Es quien toca los remotes.
       </p>
       <pre class="code" id="loaderCode">…</pre>
+      <button class="btn btn--ghost btn--sm" id="copyLoader" type="button">
+        Copiar loader del bridge
+      </button>
+
+      <p class="modal__label">2 · Mando — la consola dentro del juego</p>
+      <p class="modal__text">
+        Opcional. Abre esta misma consola como ventana en Roblox, para mandar sin
+        salir del juego. Puede ir en otra cuenta o en otro sitio.
+      </p>
+      <pre class="code" id="controlCode">…</pre>
+      <button class="btn btn--ghost btn--sm" id="copyControl" type="button">
+        Copiar loader del mando
+      </button>
+
       <div class="modal__actions">
-        <button class="btn btn--ghost" id="copyLoader" type="button">Copiar</button>
         <button class="btn btn--primary" id="closeLoader" type="button">Listo</button>
       </div>
     </dialog>

@@ -1093,10 +1093,27 @@ body {
   text-transform: uppercase;
 }
 
+.modal__label {
+  margin: 20px 0 6px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--acid-dim);
+}
+
+.modal__label:first-of-type {
+  margin-top: 4px;
+}
+
 .modal__text {
-  margin: 0 0 14px;
+  margin: 0 0 12px;
   color: var(--text-dim);
   font-size: 13px;
+}
+
+.modal .code + .btn {
+  margin-top: -6px;
 }
 
 .code {
