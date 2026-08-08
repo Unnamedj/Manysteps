@@ -217,9 +217,13 @@ app.post("/api/bridge/ack", requireBridgeAuth, (req, res) => {
 
 app.post("/api/bridge/players", requireBridgeAuth, (req, res) => {
   store.touchBridge();
-  const list = store.setPlayers(req.body?.players);
+
+  // `players` es opcional: tras cambiar un ajuste el bridge publica solo
+  // el estado del juego, y no queremos que eso vacíe la lista.
+  const players = Array.isArray(req.body?.players) ? store.setPlayers(req.body.players) : null;
   store.setGameState(req.body?.game);
-  res.json({ ok: true, count: list.length });
+
+  res.json({ ok: true, count: players ? players.length : null });
 });
 
 app.post("/api/bridge/log", requireBridgeAuth, (req, res) => {

@@ -197,6 +197,7 @@ local screen = new("ScreenGui", {
     ResetOnSpawn = false,
     ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
     DisplayOrder = 999,
+    AutoLocalize = false,
     Parent = playerGui,
 })
 
@@ -210,10 +211,23 @@ local window = new("Frame", {
     Position = UDim2.new(0.5, -293, 0.5, -212),
     BackgroundColor3 = THEME.bg,
     BorderSizePixel = 0,
+    -- Sin esto, al plegar la ventana el contenido se queda flotando
+    -- fuera de ella: encoger el marco no recorta a los hijos.
+    ClipsDescendants = true,
+    -- Y sin esto Roblox traduce los textos por su cuenta ("JOB ID" pasa
+    -- a "ID DE TRABAJO") y se comen el sitio de lo que tienen al lado.
+    AutoLocalize = false,
     Parent = screen,
 })
 corner(10, window)
 stroke(THEME.line, 1, window)
+
+-- En pantallas pequeñas 586x424 se come medio monitor. Con
+-- scale = 0.8 en la config del loader se encoge sin tocar el diseño.
+local UI_SCALE = tonumber(config.scale) or 1
+if UI_SCALE ~= 1 then
+    new("UIScale", { Scale = UI_SCALE, Parent = window })
+end
 
 -- Marca de esquina: el mismo guiño que los paneles de la web.
 new("Frame", {
@@ -316,8 +330,8 @@ local function iconButton(text, offsetX, parent)
     return button
 end
 
-local minimizeButton = iconButton("—", -72, titleBar)
-local closeButton = iconButton("✕", -40, titleBar)
+local minimizeButton = iconButton("_", -72, titleBar)
+local closeButton = iconButton("X", -40, titleBar)
 
 new("Frame", {
     Size = UDim2.new(1, -28, 0, 1),
@@ -429,7 +443,7 @@ local function field(labelText, placeholder, positionY, onSubmit)
 
     local save = new("TextButton", {
         Name = labelText:gsub("%s", "") .. "Save",
-        Text = "GUARDAR →",
+        Text = "GUARDAR",
         Font = Enum.Font.Code,
         TextSize = 10,
         TextColor3 = THEME.acidDim,
@@ -476,23 +490,33 @@ local rosterCount = label({
     TextSize = 10,
     TextColor3 = THEME.faint,
     TextXAlignment = Enum.TextXAlignment.Right,
-    Position = UDim2.new(1, -60, 0, 58),
+    Position = UDim2.new(1, -104, 0, 58),
     Size = UDim2.fromOffset(40, 12),
     Parent = window,
 })
 
+-- Nada de glifos vistosos en los botones: Roblox no trae "✕" ni "↻" en
+-- sus fuentes y salen como cuadros vacíos.
 local refreshButton = new("TextButton", {
     Name = "RefreshButton",
-    Text = "↻",
-    Font = Enum.Font.GothamBold,
-    TextSize = 14,
+    Text = "SYNC",
+    Font = Enum.Font.Code,
+    TextSize = 10,
     TextColor3 = THEME.dim,
+    TextXAlignment = Enum.TextXAlignment.Right,
     BackgroundTransparency = 1,
     AutoButtonColor = false,
-    Size = UDim2.fromOffset(18, 18),
-    Position = UDim2.new(1, -34, 0, 55),
+    Size = UDim2.fromOffset(40, 14),
+    Position = UDim2.new(1, -58, 0, 57),
     Parent = window,
 })
+
+refreshButton.MouseEnter:Connect(function()
+    refreshButton.TextColor3 = THEME.acid
+end)
+refreshButton.MouseLeave:Connect(function()
+    refreshButton.TextColor3 = THEME.dim
+end)
 
 local roster = new("ScrollingFrame", {
     Name = "Roster",
@@ -623,6 +647,12 @@ local placeDirty = false
 -- no volverían a actualizarse solos.
 local applyingState = false
 
+-- Lo que acabamos de mandar y el juego todavía no confirma. El campo se
+-- queda con ello: si lo soltáramos al enviar, el siguiente refresco lo
+-- repondría al valor viejo, porque el bridge tarda en releer el juego.
+local pendingJobId = nil
+local pendingPlaceId = nil
+
 local function selectionCount()
     local count = 0
     for _ in pairs(selected) do
@@ -705,13 +735,13 @@ end)
 
 placeBox, placeHint = field("PLACE ID", "96342491571673", 218, function(value)
     local placeId = value:match("^%s*(.-)%s*$")
-    placeDirty = false
+    pendingPlaceId = placeId
     sendCommand("settings.placeId", { placeId = placeId }, "place id enviado")
 end)
 
 jobBox, jobHint = field("JOB ID", "pega aquí el Job ID", 292, function(value)
     local jobId = value:match("^%s*(.-)%s*$")
-    jobDirty = false
+    pendingJobId = jobId
     sendCommand("settings.jobId", { jobId = jobId }, "job id enviado")
 end)
 
@@ -833,6 +863,12 @@ local function renderRoster(list)
     rosterCount.Text = tostring(#list)
     emptyNote.Visible = #list == 0
 
+    if emptyNote.Visible then
+        local online = latest and latest.bridge and latest.bridge.online
+        emptyNote.Text = online and "nadie a quien teletransportar"
+            or "conecta el bridge en el juego"
+    end
+
     if signature == rosterSignature then
         return
     end
@@ -875,19 +911,34 @@ local function applyState(state)
     pauseBorder.Color = status == "paused" and THEME.amber or THEME.line
     resumeBorder.Color = status == "running" and THEME.acid or THEME.line
 
-    if not placeDirty then
-        placeBox.Text = (state.settings and state.settings.placeId) or ""
+    local panelJobId = state.game and state.game.panelJobId or nil
+    local savedPlaceId = state.settings and state.settings.placeId or nil
+
+    -- En cuanto el juego confirma lo que mandamos, el campo vuelve a
+    -- seguir al juego.
+    if pendingJobId and panelJobId == pendingJobId then
+        pendingJobId = nil
+        jobDirty = false
+    end
+    if pendingPlaceId and savedPlaceId == pendingPlaceId then
+        pendingPlaceId = nil
+        placeDirty = false
     end
 
-    local panelJobId = state.game and state.game.panelJobId or nil
-    if not jobDirty then
+    if not placeDirty and not pendingPlaceId then
+        placeBox.Text = savedPlaceId or ""
+    end
+    if not jobDirty and not pendingJobId then
         jobBox.Text = panelJobId or (state.settings and state.settings.jobId) or ""
     end
     applyingState = false
 
     -- Igual que en la web: manda lo que el juego tiene en el cuadro.
     local typed = jobBox.Text:match("^%s*(.-)%s*$")
-    if panelJobId == nil then
+    if pendingJobId then
+        jobHint.Text = "guardando…"
+        jobHint.TextColor3 = THEME.amber
+    elseif panelJobId == nil then
         jobHint.Text = "sin datos del panel del juego"
         jobHint.TextColor3 = THEME.faint
     elseif panelJobId == "" then
@@ -987,7 +1038,7 @@ minimizeButton.MouseButton1Click:Connect(function()
     TweenService:Create(window, TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
         Size = collapsed and UDim2.fromOffset(586, 46) or UDim2.fromOffset(586, 424),
     }):Play()
-    minimizeButton.Text = collapsed and "+" or "—"
+    minimizeButton.Text = collapsed and "+" or "_"
 end)
 
 local function shutdown()

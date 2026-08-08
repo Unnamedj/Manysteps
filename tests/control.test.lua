@@ -132,6 +132,29 @@ mock.runSpawned(1)
 check("un refresco no pisa lo que estás escribiendo",
     jobBox.Text == "estoy-escribiendo-esto", jobBox.Text)
 
+-- Lo enviado se queda hasta que el juego lo confirme: el bridge tarda en
+-- releer el cuadro, y hasta entonces el panel devuelve el valor viejo.
+jobBox.Text = "job-recien-mandado"
+mock.fire(jobBox, "FocusLost", true)
+
+_G.__NEXT_RESPONSE = stateWith()  -- el panel sigue con el Job ID de antes
+mock.runSpawned(1)
+check("el valor recién mandado no lo pisa el estado viejo",
+    jobBox.Text == "job-recien-mandado", jobBox.Text)
+check("y mientras tanto avisa de que está guardando",
+    mock.findByText("guardando…") ~= nil)
+
+_G.__NEXT_RESPONSE = stateWith({ game = { panelJobId = "job-recien-mandado" } })
+mock.runSpawned(1)
+check("cuando el juego lo confirma, deja de estar pendiente",
+    mock.findByText("activo en el panel del juego") ~= nil)
+
+-- Y a partir de ahí el campo vuelve a seguir al juego.
+_G.__NEXT_RESPONSE = stateWith({ game = { panelJobId = "cambiado-desde-la-web" } })
+mock.runSpawned(1)
+check("un cambio hecho desde la web llega al mando",
+    jobBox.Text == "cambiado-desde-la-web", jobBox.Text)
+
 ----------------------------------------------------------------------
 print("teleport por tanda")
 
@@ -163,8 +186,8 @@ check("con el jugador marcado dentro",
     batch and batch.body.targets and batch.body.targets[1]
     and batch.body.targets[1].userId)
 
-check("y con el Job ID que hay escrito",
-    batch and batch.body.jobId == "estoy-escribiendo-esto", batch and batch.body.jobId)
+check("y con el Job ID que hay en el cuadro en ese momento",
+    batch and batch.body.jobId == "cambiado-desde-la-web", batch and batch.body.jobId)
 
 check("tras enviarlos se limpia la selección",
     mock.findByText("0 seleccionados") ~= nil)

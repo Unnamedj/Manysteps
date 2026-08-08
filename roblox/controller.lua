@@ -198,6 +198,13 @@ local function readGameState()
     return state
 end
 
+-- Tras cambiar un ajuste hay que contarlo ya: si esperásemos al refresco
+-- periódico, el panel seguiría enseñando el valor viejo casi medio
+-- minuto y pisaría lo que acabas de escribir.
+local function publishGameState()
+    httpJson("POST", "/api/bridge/players", { game = readGameState() })
+end
+
 local function pushPlayers()
     pace("GetTeleportCandidates")
     local ok, list = pcall(Remotes.getCandidates)
@@ -244,6 +251,8 @@ local handlers = {
             -- Sin el cuadro, lo guardado no llega a aplicarse solo.
             error(tostring(boxError), 0)
         end
+
+        publishGameState()
         return { jobId = jobId, panel = Remotes.getPanelJobId() }
     end,
 
@@ -251,6 +260,7 @@ local handlers = {
         local placeId = tostring(payload.placeId)
         pace("SaveAdminSettings")
         Remotes.savePlaceId(placeId)
+        publishGameState()
         return { placeId = placeId }
     end,
 

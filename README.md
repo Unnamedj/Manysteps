@@ -125,8 +125,19 @@ Por eso puede correr donde quieras: en otra cuenta, en otro servidor o en
 otro juego. Solo necesita alcanzar el panel.
 
 - `RightControl` muestra u oculta la ventana.
-- La barra de título la arrastra; el `—` la pliega.
+- La barra de título la arrastra; el `_` la pliega.
 - `getgenv().MANYSTEPS_CONTROL_STOP()` la cierra del todo.
+
+Si en tu pantalla se ve grande, cárgalo a mano con una escala:
+
+```lua
+getgenv().MANYSTEPS_CONFIG = {
+    url = "https://TU-APP.up.railway.app",
+    key = "TU_BRIDGE_KEY",
+    scale = 0.8,
+}
+loadstring(game:HttpGet("https://TU-APP.up.railway.app/script/control.lua"))()
+```
 
 Puedes ejecutar el bridge y el mando en la misma sesión: son
 independientes y no se pisan.
