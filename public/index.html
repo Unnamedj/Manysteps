@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#08090a" />
+    <title>Manysteps · Consola</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230b0d0f'/%3E%3Cpath d='M7 22V10l5 6 4-6 4 6 5-6v12' fill='none' stroke='%23c6f24e' stroke-width='2.4' stroke-linejoin='round' stroke-linecap='round'/%3E%3C/svg%3E"
+    />
+  </head>
+  <body>
+    <div class="backdrop" aria-hidden="true"></div>
+
+    <!-- ---------------------------------------------------------- -->
+    <!-- acceso                                                      -->
+    <!-- ---------------------------------------------------------- -->
+    <div class="gate" id="gate" hidden>
+      <form class="gate__card" id="loginForm" autocomplete="off">
+        <div class="gate__mark">
+          <svg viewBox="0 0 32 32" width="34" height="34" aria-hidden="true">
+            <path
+              d="M7 22V10l5 6 4-6 4 6 5-6v12"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2.4"
+              stroke-linejoin="round"
+              stroke-linecap="round"
+            />
+          </svg>
+        </div>
+        <h1 class="gate__title">MANYSTEPS</h1>
+        <p class="gate__sub">Consola de operaciones remotas</p>
+
+        <label class="field">
+          <span class="field__label">Clave de acceso</span>
+          <input
+            class="field__input"
+            id="password"
+            type="password"
+            placeholder="••••••••"
+            required
+            autocomplete="current-password"
+          />
+        </label>
+
+        <button class="btn btn--primary btn--block" type="submit" id="loginBtn">
+          Entrar
+        </button>
+        <p class="gate__error" id="loginError" role="alert" hidden></p>
+      </form>
+      <p class="gate__foot">acceso restringido · sesión de 12 h</p>
+    </div>
+
+    <!-- ---------------------------------------------------------- -->
+    <!-- consola                                                     -->
+    <!-- ---------------------------------------------------------- -->
+    <div class="shell" id="app" hidden>
+      <header class="topbar">
+        <div class="brand">
+          <svg viewBox="0 0 32 32" width="26" height="26" aria-hidden="true">
+            <path
+              d="M7 22V10l5 6 4-6 4 6 5-6v12"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2.6"
+              stroke-linejoin="round"
+              stroke-linecap="round"
+            />
+          </svg>
+          <div class="brand__text">
+            <strong>MANYSTEPS</strong>
+            <span>remote ops</span>
+          </div>
+        </div>
+
+        <div class="statusbar">
+          <div class="chip" id="bridgeChip" data-state="off">
+            <i class="led"></i>
+            <div class="chip__body">
+              <span class="chip__label">Bridge</span>
+              <span class="chip__value" id="bridgeValue">desconectado</span>
+            </div>
+          </div>
+
+          <div class="chip" id="clockChip" data-state="unknown">
+            <i class="led"></i>
+            <div class="chip__body">
+              <span class="chip__label">Tiempo</span>
+              <span class="chip__value" id="clockValue">sin datos</span>
+            </div>
+          </div>
+
+          <div class="chip chip--quiet">
+            <div class="chip__body">
+              <span class="chip__label">Cola</span>
+              <span class="chip__value" id="queueValue">0</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="topbar__actions">
+          <button class="btn btn--ghost" id="linkBtn" type="button">Loader</button>
+          <button class="btn btn--ghost" id="logoutBtn" type="button">Salir</button>
+        </div>
+      </header>
+
+      <main class="grid">
+        <!-- ------------------------------------------------ -->
+        <div class="col">
+          <section class="panel">
+            <header class="panel__head">
+              <h2>Control de tiempo</h2>
+              <span class="panel__tag">ToggleAdminTimePause</span>
+            </header>
+            <div class="panel__body">
+              <div class="switch">
+                <button class="bigbtn bigbtn--pause" data-cmd="time.pause" type="button">
+                  <span class="bigbtn__glyph" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" width="22" height="22">
+                      <rect x="6" y="4" width="4" height="16" rx="1.2" fill="currentColor" />
+                      <rect x="14" y="4" width="4" height="16" rx="1.2" fill="currentColor" />
+                    </svg>
+                  </span>
+                  <span class="bigbtn__text">
+                    <strong>Pausar</strong>
+                    <small>congela el reloj</small>
+                  </span>
+                </button>
+
+                <button class="bigbtn bigbtn--resume" data-cmd="time.resume" type="button">
+                  <span class="bigbtn__glyph" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" width="22" height="22">
+                      <path d="M7 4.5 19 12 7 19.5z" fill="currentColor" />
+                    </svg>
+                  </span>
+                  <span class="bigbtn__text">
+                    <strong>Reanudar</strong>
+                    <small>vuelve a correr</small>
+                  </span>
+                </button>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <header class="panel__head">
+              <h2>Destino</h2>
+              <span class="panel__tag">SaveAdminSettings</span>
+            </header>
+            <div class="panel__body stack">
+              <form class="field" id="placeForm">
+                <div class="field__top">
+                  <span class="field__label">Place ID</span>
+                  <button class="linkbtn" type="submit">guardar →</button>
+                </div>
+                <input
+                  class="field__input mono"
+                  id="placeInput"
+                  inputmode="numeric"
+                  placeholder="96342491571673"
+                />
+                <span class="field__hint" id="placeHint">sin guardar todavía</span>
+              </form>
+
+              <form class="field" id="jobForm">
+                <div class="field__top">
+                  <span class="field__label">Job ID</span>
+                  <button class="linkbtn" type="submit">guardar →</button>
+                </div>
+                <input
+                  class="field__input mono"
+                  id="jobInput"
+                  placeholder="00000000-0000-0000-0000-000000000000"
+                  spellcheck="false"
+                />
+                <span class="field__hint" id="jobHint">sin guardar todavía</span>
+              </form>
+            </div>
+          </section>
+
+          <section class="panel panel--compact">
+            <header class="panel__head">
+              <h2>Sesión del bridge</h2>
+            </header>
+            <div class="panel__body">
+              <dl class="meta">
+                <div><dt>Cuenta</dt><dd id="metaUser">—</dd></div>
+                <div><dt>Executor</dt><dd id="metaExecutor">—</dd></div>
+                <div><dt>Place actual</dt><dd id="metaPlace" class="mono">—</dd></div>
+                <div><dt>Job actual</dt><dd id="metaJob" class="mono trunc">—</dd></div>
+                <div><dt>Último ping</dt><dd id="metaPing">—</dd></div>
+              </dl>
+            </div>
+          </section>
+        </div>
+
+        <!-- ------------------------------------------------ -->
+        <div class="col">
+          <section class="panel panel--grow">
+            <header class="panel__head">
+              <h2>Jugadores</h2>
+              <span class="panel__tag" id="rosterCount">0</span>
+              <button class="iconbtn" id="refreshBtn" type="button" title="Refrescar lista">
+                <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+                  <path
+                    d="M20 12a8 8 0 1 1-2.4-5.7M20 4v4h-4"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
+                </svg>
+              </button>
+            </header>
+
+            <div class="roster__tools">
+              <div class="search">
+                <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
+                  <circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="2" />
+                  <path d="m16 16 4.5 4.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                </svg>
+                <input id="search" type="search" placeholder="Buscar jugador…" autocomplete="off" />
+              </div>
+              <button class="btn btn--ghost btn--sm" id="selectAllBtn" type="button">
+                Todos
+              </button>
+              <button class="btn btn--ghost btn--sm" id="clearSelBtn" type="button">
+                Ninguno
+              </button>
+            </div>
+
+            <div class="roster" id="roster" role="list"></div>
+
+            <footer class="roster__foot">
+              <div class="roster__summary">
+                <span class="counter" id="selCount">0</span>
+                <span class="roster__dest" id="destSummary">selecciona un destino</span>
+              </div>
+              <button class="btn btn--send" id="sendBtn" type="button" disabled>
+                <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+                  <path
+                    d="M4 12h13m0 0-5-5m5 5-5 5M20 4v16"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
+                </svg>
+                Enviar teleport
+              </button>
+            </footer>
+          </section>
+        </div>
+
+        <!-- ------------------------------------------------ -->
+        <div class="col">
+          <section class="panel panel--grow">
+            <header class="panel__head">
+              <h2>Actividad</h2>
+              <span class="panel__tag" id="logTag">en vivo</span>
+            </header>
+            <div class="console" id="log"></div>
+          </section>
+        </div>
+      </main>
+    </div>
+
+    <!-- ---------------------------------------------------------- -->
+    <dialog class="modal" id="loaderModal">
+      <h3>Cargar el bridge en Roblox</h3>
+      <p class="modal__text">
+        Pega esto en tu executor con el juego abierto. El script se conecta a esta
+        consola y queda esperando órdenes.
+      </p>
+      <pre class="code" id="loaderCode">…</pre>
+      <div class="modal__actions">
+        <button class="btn btn--ghost" id="copyLoader" type="button">Copiar</button>
+        <button class="btn btn--primary" id="closeLoader" type="button">Listo</button>
+      </div>
+    </dialog>
+
+    <div class="toasts" id="toasts" aria-live="polite"></div>
+
+    <script src="./app.js" type="module"></script>
+  </body>
+</html>

@@ -1,0 +1,22 @@
+{
+  "name": "manysteps-control",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Panel web de control remoto para AdminEvents (Roblox) — backend + bridge.",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "test": "node tests/run.mjs"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "fengari": "^0.1.4"
+  }
+}
