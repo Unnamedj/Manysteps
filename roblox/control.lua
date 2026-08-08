@@ -649,6 +649,7 @@ local placeBox, placeHint
 local jobBox, jobHint
 
 local selected = {}
+local playerBridge = {}
 local rosterRows = {}
 local rosterSignature = ""
 local latest = nil
@@ -685,7 +686,7 @@ local function refreshSelectionUi()
     local count = selectionCount()
     selectionLabel.Text = count == 1 and "1 seleccionado" or (count .. " seleccionados")
 
-    local enabled = count > 0 and latest and latest.bridge and latest.bridge.online
+    local enabled = count > 0 and latest and (tonumber(latest.online) or 0) > 0
     sendButton.BackgroundColor3 = enabled and THEME.acid or THEME.surfaceAlt
     sendButton.TextColor3 = enabled and THEME.acidInk or THEME.faint
 end
@@ -721,9 +722,10 @@ refreshButton.MouseButton1Click:Connect(function()
 end)
 
 sendButton.MouseButton1Click:Connect(function()
+    -- Cada jugador va por el bridge que lo tiene delante en su partida.
     local targets = {}
     for userId in pairs(selected) do
-        table.insert(targets, { userId = userId })
+        table.insert(targets, { userId = userId, bridgeId = playerBridge[userId] })
     end
     if #targets == 0 then
         setStatus("no hay nadie seleccionado", "warn")
@@ -876,8 +878,14 @@ local function makeRow(entry, order)
         Parent = row,
     })
 
+    -- Con varios bridges hace falta saber de qué partida sale cada uno.
+    local secondary = ("@%s · %s"):format(entry.username, entry.userId)
+    if entry.bridgeName and latest and (tonumber(latest.online) or 0) > 1 then
+        secondary = secondary .. "  [" .. entry.bridgeName .. "]"
+    end
+
     label({
-        Text = ("@%s · %s"):format(entry.username, entry.userId),
+        Text = secondary,
         Font = Enum.Font.Code,
         TextSize = 10,
         TextColor3 = THEME.faint,
@@ -927,6 +935,11 @@ local function makeRow(entry, order)
 end
 
 local function renderRoster(list)
+    playerBridge = {}
+    for _, entry in ipairs(list) do
+        playerBridge[entry.userId] = entry.bridgeId
+    end
+
     local signature = {}
     for _, entry in ipairs(list) do
         table.insert(signature, entry.userId)
@@ -937,9 +950,9 @@ local function renderRoster(list)
     emptyNote.Visible = #list == 0
 
     if emptyNote.Visible then
-        local online = latest and latest.bridge and latest.bridge.online
+        local online = latest and (tonumber(latest.online) or 0) > 0
         emptyNote.Text = online and "nadie a quien teletransportar"
-            or "conecta el bridge en el juego"
+            or "conecta un bridge en el juego"
     end
 
     if signature == rosterSignature then
@@ -1080,24 +1093,52 @@ local function applyState(state)
     latest = state
     applyingState = true
 
-    local online = state.bridge and state.bridge.online
-    led.BackgroundColor3 = online and THEME.acid or THEME.red
-    ledText.Text = online and (state.bridge.username or "en línea") or "sin bridge"
-    ledText.TextColor3 = online and THEME.acid or THEME.red
+    local bridges = state.bridges or {}
+    local count = tonumber(state.online) or 0
 
-    local status = state.time and state.time.status or "unknown"
-    pauseBorder.Color = status == "paused" and THEME.amber or THEME.line
-    resumeBorder.Color = status == "running" and THEME.acid or THEME.line
+    led.BackgroundColor3 = count > 0 and THEME.acid or THEME.red
+    ledText.TextColor3 = count > 0 and THEME.acid or THEME.red
 
-    -- El reloj de acceso lo cuenta el servidor del juego; aquí solo se
-    -- guarda para ir descontándolo entre lecturas.
-    access = state.access
+    if count == 0 then
+        ledText.Text = "sin bridges"
+    elseif count == 1 then
+        local only
+        for _, bridge in ipairs(bridges) do
+            if bridge.online then
+                only = bridge
+            end
+        end
+        ledText.Text = only and (only.username or "1 en línea") or "1 en línea"
+    else
+        ledText.Text = count .. " bridges"
+    end
+
+    -- De todos los conectados enseñamos el que antes se queda sin
+    -- tiempo, que es el que va a dar problemas primero.
+    local worst = nil
+    for _, bridge in ipairs(bridges) do
+        if bridge.online and bridge.access and bridge.access.status then
+            local remaining = tonumber(bridge.access.remainingSeconds) or 0
+            if not worst or remaining < (tonumber(worst.remainingSeconds) or 0) then
+                worst = bridge.access
+            end
+        end
+    end
+
+    access = worst
     accessReadAt = os.clock()
     renderClock()
 
+    local panelJobId = nil
+    for _, bridge in ipairs(bridges) do
+        if bridge.online and bridge.panelJobId then
+            panelJobId = bridge.panelJobId
+            break
+        end
+    end
+
     renderPlaces(state.places)
 
-    local panelJobId = state.game and state.game.panelJobId or nil
     local savedPlaceId = state.settings and state.settings.placeId or nil
 
     -- En cuanto el juego confirma lo que mandamos, el campo vuelve a

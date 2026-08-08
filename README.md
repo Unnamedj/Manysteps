@@ -4,20 +4,40 @@ Panel web (desplegable en Railway) que controla los remotes de
 `ReplicatedStorage.AdminEvents` desde un script ejecutado dentro de Roblox.
 
 ```
-   navegador                Railway                     Roblox
-  ┌──────────┐   HTTPS   ┌────────────┐  long-poll  ┌──────────────┐
-  │  panel   │ ────────► │  servidor  │ ◄────────── │ controller.lua│
-  │  (web)   │ ◄──────── │  (cola +   │ ──────────► │      ↓        │
-  └──────────┘   websock │   estado)  │   comandos  │  remotes.lua  │
-                         └────────────┘             └──────────────┘
-  ┌──────────┐              ▲     │                        ↓
-  │ control  │ ─────────────┘     └──────────────►  AdminEvents
-  │  (mando) │   mismas órdenes, desde dentro del juego
-  └──────────┘
+   navegador                Railway                    Roblox
+  ┌──────────┐   HTTPS   ┌────────────┐            ┌───────────────┐
+  │  panel   │ ────────► │  servidor  │ ◄────────► │ bridge · opA  │
+  │  (web)   │ ◄──────── │            │            ├───────────────┤
+  └──────────┘   websock │  una cola  │ ◄────────► │ bridge · opB  │
+  ┌──────────┐           │ por bridge │            ├───────────────┤
+  │  mando   │ ────────► │            │ ◄────────► │ bridge · opC  │
+  │ (roblox) │           └────────────┘  long-poll └───────────────┘
+  └──────────┘                                             ↓
+                                            remotes.lua → AdminEvents
 ```
 
 El panel nunca habla con Roblox directamente: encola comandos y el script
 del juego los recoge, ejecuta el remote y devuelve el resultado.
+
+## Varios bridges a la vez
+
+Puedes tener tantas cuentas ejecutando el bridge como quieras. Cada una
+aparece en el panel con su propio estado — tiempo de acceso, Job ID de su
+cuadro, cuántos jugadores tiene delante — y **cada una lleva su propia
+cola**: una orden nunca acaba ejecutándose en la partida equivocada.
+
+- Las órdenes van **a todos** por defecto (pausar, fijar destino). Al
+  pulsar un bridge en la lista, van solo a ese y la lista de jugadores se
+  filtra a los que él ve.
+- Los teleports se mandan **por el bridge que ve a cada jugador**, aunque
+  selecciones gente de varias partidas a la vez.
+- Las cuentas que hacen de bridge **no salen en la lista de jugadores**:
+  no tiene sentido ofrecerte teletransportar a tus propios operadores.
+- Si el mismo jugador lo ven dos bridges, aparece una sola vez.
+
+La identidad de cada bridge es el `UserId` de la cuenta que lo ejecuta,
+así que reejecutar el script no deja un fantasma en la lista. Un bridge
+caído se queda visible en gris diez minutos y luego desaparece.
 
 Hay dos formas de mandar: **el panel web** y **el mando**, una ventana
 dentro de Roblox que hace lo mismo sin salir del juego. Los dos hablan

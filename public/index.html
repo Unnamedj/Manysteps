@@ -188,21 +188,13 @@
 
           <section class="panel panel--compact">
             <header class="panel__head">
-              <h2>Sesión del bridge</h2>
+              <h2>Bridges</h2>
+              <span class="panel__tag" id="bridgeTag">0 en línea</span>
             </header>
-            <div class="panel__body">
-              <dl class="meta">
-                <div><dt>Cuenta</dt><dd id="metaUser">—</dd></div>
-                <div><dt>Executor</dt><dd id="metaExecutor">—</dd></div>
-                <div><dt>Place actual</dt><dd id="metaPlace" class="mono">—</dd></div>
-                <div><dt>Job actual</dt><dd id="metaJob" class="mono trunc">—</dd></div>
-                <div>
-                  <dt>Job en el panel</dt>
-                  <dd id="metaPanelJob" class="mono trunc">—</dd>
-                </div>
-                <div><dt>Último ping</dt><dd id="metaPing">—</dd></div>
-              </dl>
-            </div>
+            <div class="bridges" id="bridges"></div>
+            <footer class="bridges__foot">
+              <span id="targetNote">las órdenes van a todos</span>
+            </footer>
           </section>
         </div>
 

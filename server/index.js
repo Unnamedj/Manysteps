@@ -112,16 +112,17 @@ app.get("/api/control/state", requirePanelAuth, (_req, res) => {
   const state = store.snapshot();
   res.json({
     serverTime: state.serverTime,
-    bridge: {
-      online: state.bridge.online,
-      username: state.bridge.username,
-      jobId: state.bridge.jobId,
-    },
-    time: state.time,
-    access: state.access,
+    online: state.online,
+    bridges: state.bridges.map((b) => ({
+      id: b.id,
+      username: b.username,
+      online: b.online,
+      access: b.access,
+      panelJobId: b.panelJobId,
+      playerCount: b.playerCount,
+    })),
     places: state.places,
     settings: { placeId: state.settings.placeId, jobId: state.settings.jobId },
-    game: { panelJobId: state.game.panelJobId },
     players: state.players.list,
     pending: state.pending,
     log: store.recentLog().slice(0, 6).map((entry) => ({
@@ -157,11 +158,19 @@ app.post("/api/command", requirePanelAuth, (req, res) => {
     return res.status(400).json({ error: err.message });
   }
 
-  const command = store.enqueue(type, payload);
-  res.json({ ok: true, id: command.id });
+  // Sin destino explícito la orden va a todos los bridges: pausar o
+  // fijar el destino tiene sentido en bloque.
+  const result = store.enqueue(type, payload, String(req.body?.target || "all"));
+  if (result.error) return res.status(409).json({ error: result.error });
+
+  res.json({ ok: true, accepted: result.accepted });
 });
 
-/* Envío masivo: una llamada, un teleport por jugador seleccionado. */
+/**
+ * Envío masivo. Cada jugador se manda por el bridge que lo ve en su
+ * partida: mandarlo por otro sería pedirle que teletransporte a alguien
+ * que no tiene delante.
+ */
 app.post("/api/teleport/batch", requirePanelAuth, (req, res) => {
   const targets = Array.isArray(req.body?.targets) ? req.body.targets.slice(0, 50) : [];
   if (targets.length === 0) return res.status(400).json({ error: "sin jugadores" });
@@ -176,7 +185,10 @@ app.post("/api/teleport/batch", requirePanelAuth, (req, res) => {
         placeId: req.body?.placeId,
         jobId: req.body?.jobId,
       });
-      accepted.push(store.enqueue("teleport.send", payload).id);
+
+      const result = store.enqueue("teleport.send", payload, String(target?.bridgeId || "all"));
+      if (result.error) throw new Error(result.error);
+      accepted.push(...result.accepted);
     } catch (err) {
       rejected.push({ userId: target?.userId, error: err.message });
     }
@@ -192,13 +204,33 @@ app.post("/api/teleport/batch", requirePanelAuth, (req, res) => {
 /* API del bridge (script de Roblox)                                   */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Cada bridge se identifica con su cuenta de Roblox. Sin ese id no hay
+ * a quién encolarle nada: con varios conectados, una orden suelta podría
+ * acabar ejecutándose en la partida equivocada.
+ */
+function bridgeIdOf(req) {
+  return String(req.headers["x-bridge-id"] || req.query.bridge || req.body?.userId || "").trim();
+}
+
 app.post("/api/bridge/hello", requireBridgeAuth, (req, res) => {
-  store.touchBridge(req.body ?? {});
-  res.json({ ok: true, settings: store.currentSettings(), serverTime: Date.now() });
+  const id = bridgeIdOf(req);
+  if (!id) return res.status(400).json({ error: "falta el identificador del bridge" });
+
+  const bridge = store.touchBridge(id, req.body ?? {});
+  res.json({
+    ok: true,
+    bridgeId: bridge.id,
+    settings: store.currentSettings(),
+    serverTime: Date.now(),
+  });
 });
 
 app.get("/api/bridge/poll", requireBridgeAuth, async (req, res) => {
-  store.touchBridge({
+  const id = bridgeIdOf(req);
+  if (!id) return res.status(400).json({ error: "falta el identificador del bridge" });
+
+  store.touchBridge(id, {
     executor: req.query.executor,
     placeId: req.query.placeId,
     jobId: req.query.jobId,
@@ -207,33 +239,42 @@ app.get("/api/bridge/poll", requireBridgeAuth, async (req, res) => {
   });
 
   const wait = Math.min(Math.max(Number(req.query.wait) || 15, 1), 25) * 1000;
-  const commands = await store.waitForCommands(wait);
+  const commands = await store.waitForCommands(id, wait);
   res.json({ commands, serverTime: Date.now() });
 });
 
 app.post("/api/bridge/ack", requireBridgeAuth, (req, res) => {
-  store.touchBridge();
-  store.ack(Array.isArray(req.body?.results) ? req.body.results : []);
+  const id = bridgeIdOf(req);
+  store.touchBridge(id);
+  store.ack(id, Array.isArray(req.body?.results) ? req.body.results : []);
   res.json({ ok: true });
 });
 
 app.post("/api/bridge/players", requireBridgeAuth, (req, res) => {
-  store.touchBridge();
+  const id = bridgeIdOf(req);
+  store.touchBridge(id);
 
   // `players` es opcional: tras cambiar un ajuste el bridge publica solo
   // el estado del juego, y no queremos que eso vacíe la lista.
-  const players = Array.isArray(req.body?.players) ? store.setPlayers(req.body.players) : null;
-  store.setGameState(req.body?.game);
+  const players = Array.isArray(req.body?.players)
+    ? store.setPlayers(id, req.body.players)
+    : null;
+  store.setGameState(id, req.body?.game);
 
   res.json({ ok: true, count: players ? players.length : null });
 });
 
 app.post("/api/bridge/log", requireBridgeAuth, (req, res) => {
-  store.touchBridge();
+  const id = bridgeIdOf(req);
+  store.touchBridge(id);
+
   const level = ["info", "ok", "warn", "error"].includes(req.body?.level)
     ? req.body.level
     : "info";
-  store.log(level, String(req.body?.message ?? "").slice(0, 400), { from: "bridge" });
+  const name = store.bridgeName(store.getBridge(id));
+  store.log(level, `${String(req.body?.message ?? "").slice(0, 400)} · ${name}`, {
+    bridgeName: name,
+  });
   res.json({ ok: true });
 });
 
@@ -347,7 +388,7 @@ setInterval(() => {
   }
 }, 30_000).unref();
 
-setInterval(() => store.sweepBridge(), 5_000).unref();
+setInterval(() => store.sweepBridges(), 5_000).unref();
 
 /* ------------------------------------------------------------------ */
 

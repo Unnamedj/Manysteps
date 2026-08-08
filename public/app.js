@@ -27,12 +27,9 @@ const el = {
   jobHint: $("jobHint"),
   useCurrentJob: $("useCurrentJob"),
 
-  metaUser: $("metaUser"),
-  metaExecutor: $("metaExecutor"),
-  metaPlace: $("metaPlace"),
-  metaJob: $("metaJob"),
-  metaPanelJob: $("metaPanelJob"),
-  metaPing: $("metaPing"),
+  bridges: $("bridges"),
+  bridgeTag: $("bridgeTag"),
+  targetNote: $("targetNote"),
 
   roster: $("roster"),
   rosterCount: $("rosterCount"),
@@ -57,6 +54,8 @@ const el = {
 };
 
 const selected = new Set();
+// A qué bridge van las órdenes: "all" o el id de uno concreto.
+let target = "all";
 let snapshot = null;
 let rosterSignature = "";
 let socket = null;
@@ -197,24 +196,20 @@ function connectSocket() {
 function applySnapshot(state) {
   snapshot = state;
 
-  // bridge
-  const online = state.bridge.online;
+  // bridges
+  const online = state.online > 0;
   el.bridgeChip.dataset.state = online ? "on" : "off";
-  el.bridgeValue.textContent = online
-    ? state.bridge.username || "en línea"
-    : "desconectado";
+  el.bridgeValue.textContent = !online
+    ? "ninguno"
+    : state.online === 1
+      ? state.bridges.find((b) => b.online)?.username || "1 en línea"
+      : `${state.online} en línea`;
+
+  renderBridges(state.bridges || []);
 
   // reloj del juego
   renderClock();
   renderPlaces(state.places || []);
-  const time = state.time.status;
-
-  document
-    .querySelector('.bigbtn[data-cmd="time.pause"]')
-    ?.setAttribute("data-active", time === "paused" ? "1" : "0");
-  document
-    .querySelector('.bigbtn[data-cmd="time.resume"]')
-    ?.setAttribute("data-active", time === "running" ? "1" : "0");
 
   el.queueValue.textContent = String(state.pending ?? 0);
 
@@ -226,18 +221,6 @@ function applySnapshot(state) {
     ? `guardado ${ago(state.settings.savedPlaceIdAt)}`
     : "sin guardar todavía";
   el.placeHint.dataset.ok = state.settings.savedPlaceIdAt ? "1" : "0";
-
-  const panelJobId = state.game?.panelJobId ?? null;
-
-  // sesión
-  el.metaUser.textContent = state.bridge.username || "—";
-  el.metaExecutor.textContent = state.bridge.executor || "—";
-  el.metaPlace.textContent = state.bridge.placeId || "—";
-  el.metaJob.textContent = state.bridge.jobId || "—";
-  el.metaJob.title = state.bridge.jobId || "";
-  el.metaPanelJob.textContent = panelJobId || (panelJobId === "" ? "(vacío)" : "—");
-  el.metaPanelJob.title = panelJobId || "";
-  el.metaPing.textContent = ago(state.bridge.lastSeen);
 
   renderRoster();
   renderDestination();
@@ -260,25 +243,43 @@ function mmss(seconds) {
   return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
 }
 
-/**
- * Estado del reloj. Si el bridge ha leído GetAccessStatus usamos eso,
- * que es la verdad del servidor; si no, lo que dedujimos del último
- * comando. El tiempo restante se descuenta aquí entre lecturas.
- */
-function renderClock() {
-  const access = snapshot?.access;
-  const time = snapshot?.time?.status ?? "unknown";
-
-  if (!access?.status) {
-    el.clockChip.dataset.state = time === "unknown" ? "unknown" : time;
-    el.clockValue.textContent =
-      time === "paused" ? "pausado" : time === "running" ? "corriendo" : "sin datos";
-    return;
-  }
-
+/** Segundos que le quedan a un acceso, descontando lo que va corrido. */
+function secondsLeft(access) {
+  if (!access?.status) return Infinity;
   const running = access.status === "active";
   const elapsed = running ? (Date.now() - access.readAt) / 1000 : 0;
-  const left = Math.max(0, access.remainingSeconds - elapsed);
+  return Math.max(0, access.remainingSeconds - elapsed);
+}
+
+/**
+ * Con varios bridges el chip enseña el que antes se queda sin tiempo,
+ * que es el que te va a dar problemas. Si has fijado uno como destino
+ * de las órdenes, enseña el suyo.
+ */
+function relevantAccess() {
+  const list = (snapshot?.bridges || []).filter((b) => b.online && b.access?.status);
+  if (list.length === 0) return null;
+
+  if (target !== "all") {
+    return list.find((b) => b.id === target)?.access ?? null;
+  }
+
+  const timed = list.filter((b) => b.access.status === "active" || b.access.status === "paused");
+  if (timed.length === 0) return list[0].access;
+
+  return timed.reduce((worst, b) =>
+    secondsLeft(b.access) < secondsLeft(worst.access) ? b : worst,
+  ).access;
+}
+
+function renderClock() {
+  const access = relevantAccess();
+
+  if (!access) {
+    el.clockChip.dataset.state = "unknown";
+    el.clockValue.textContent = "sin datos";
+    return;
+  }
 
   el.clockChip.dataset.state =
     access.status === "paused"
@@ -289,9 +290,96 @@ function renderClock() {
 
   const label = ACCESS_LABEL[access.status] ?? access.status;
   el.clockValue.textContent =
-    access.status === "permanent" || access.status === "locked" || access.status === "blacklisted"
-      ? label
-      : `${label} · ${mmss(left)}`;
+    access.status === "active" || access.status === "paused"
+      ? `${label} · ${mmss(secondsLeft(access))}`
+      : label;
+}
+
+/** Lista de bridges conectados y a cuál se le habla. */
+function renderBridges(list) {
+  el.bridgeTag.textContent = `${snapshot?.online ?? 0} en línea`;
+
+  // Si el bridge elegido desaparece, las órdenes vuelven a ir a todos.
+  if (target !== "all" && !list.some((b) => b.id === target && b.online)) {
+    target = "all";
+  }
+
+  el.bridges.replaceChildren();
+
+  if (list.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "bridges__empty";
+    empty.textContent = "ningún bridge conectado todavía";
+    el.bridges.append(empty);
+    el.targetNote.textContent = "pega el loader en una cuenta para empezar";
+    return;
+  }
+
+  const rows = [{ id: "all", username: "Todos los bridges", online: true, all: true }, ...list];
+
+  for (const bridge of rows) {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "bridge";
+    row.dataset.selected = target === bridge.id ? "1" : "0";
+    row.dataset.online = bridge.online ? "1" : "0";
+
+    const led = document.createElement("i");
+    led.className = "led";
+    if (bridge.all) {
+      led.style.background = "var(--blue)";
+    } else if (bridge.online) {
+      led.style.background = "var(--acid)";
+    } else {
+      led.style.background = "var(--red)";
+    }
+
+    const who = document.createElement("span");
+    who.className = "bridge__who";
+    const name = document.createElement("b");
+    name.textContent = bridge.username;
+    const detail = document.createElement("span");
+
+    if (bridge.all) {
+      const count = list.filter((b) => b.online).length;
+      detail.textContent = `${count} conectado${count === 1 ? "" : "s"}`;
+    } else if (!bridge.online) {
+      detail.textContent = `caído ${ago(bridge.lastSeen)}`;
+    } else {
+      const job = bridge.panelJobId ? bridge.panelJobId.slice(0, 8) + "…" : "sin job";
+      detail.textContent = `${bridge.playerCount} jugador${
+        bridge.playerCount === 1 ? "" : "es"
+      } · ${job}`;
+    }
+    who.append(name, detail);
+
+    row.append(led, who);
+
+    if (!bridge.all && bridge.access?.status) {
+      const clockEl = document.createElement("span");
+      clockEl.className = "bridge__clock";
+      clockEl.dataset.state = bridge.access.status;
+      clockEl.textContent =
+        bridge.access.status === "active" || bridge.access.status === "paused"
+          ? mmss(secondsLeft(bridge.access))
+          : ACCESS_LABEL[bridge.access.status] ?? "";
+      row.append(clockEl);
+    }
+
+    row.addEventListener("click", () => {
+      target = bridge.id;
+      renderBridges(snapshot?.bridges || []);
+      renderRoster();
+      renderClock();
+    });
+
+    el.bridges.append(row);
+  }
+
+  el.targetNote.textContent =
+    target === "all"
+      ? "las órdenes van a todos"
+      : `las órdenes van solo a ${list.find((b) => b.id === target)?.username ?? target}`;
 }
 
 function renderPlaces(places) {
@@ -324,7 +412,9 @@ function renderPlaces(places) {
 }
 
 function renderRoster() {
-  const list = snapshot?.players?.list ?? [];
+  const all = snapshot?.players?.list ?? [];
+  // Con un bridge fijado, solo los que ese bridge tiene delante.
+  const list = target === "all" ? all : all.filter((p) => p.bridgeId === target);
   const query = el.search.value.trim().toLowerCase();
   const visible = query
     ? list.filter(
@@ -348,9 +438,9 @@ function renderRoster() {
       empty.className = "roster__empty";
       empty.textContent = list.length
         ? "ningún jugador coincide con la búsqueda"
-        : snapshot?.bridge?.online
+        : (snapshot?.online ?? 0) > 0
           ? "esperando la lista de GetTeleportCandidates…"
-          : "conecta el bridge para ver jugadores";
+          : "conecta un bridge para ver jugadores";
       el.roster.append(empty);
     } else {
       for (const player of visible) el.roster.append(rosterItem(player));
@@ -364,11 +454,11 @@ function renderRoster() {
   }
 
   // Limpia selecciones de jugadores que ya no están.
-  const alive = new Set(list.map((p) => p.userId));
+  const alive = new Set(all.map((p) => p.userId));
   for (const id of [...selected]) if (!alive.has(id)) selected.delete(id);
 
   el.selCount.textContent = `${selected.size} seleccionado${selected.size === 1 ? "" : "s"}`;
-  el.sendBtn.disabled = selected.size === 0 || !snapshot?.bridge?.online;
+  el.sendBtn.disabled = selected.size === 0 || (snapshot?.online ?? 0) === 0;
 }
 
 function rosterItem(player) {
@@ -405,6 +495,14 @@ function rosterItem(player) {
   const handle = document.createElement("span");
   handle.textContent = `@${player.username} · ${player.userId}`;
   who.append(name, handle);
+
+  // De qué partida viene: con varios bridges hace falta saberlo.
+  if ((snapshot?.online ?? 0) > 1 && player.bridgeName) {
+    const from = document.createElement("i");
+    from.className = "tagline";
+    from.textContent = player.bridgeName;
+    name.append(from);
+  }
 
   item.append(tick, avatar, who);
   item.addEventListener("click", () => {
@@ -485,7 +583,7 @@ function logLine(entry) {
 
 async function send(type, payload = {}) {
   try {
-    await api("/api/command", { method: "POST", body: { type, payload } });
+    await api("/api/command", { method: "POST", body: { type, payload, target } });
   } catch (error) {
     toast(error.message, "error");
     throw error;
@@ -494,8 +592,8 @@ async function send(type, payload = {}) {
 
 for (const button of document.querySelectorAll(".bigbtn[data-cmd]")) {
   button.addEventListener("click", () => {
-    if (!snapshot?.bridge?.online) {
-      toast("El bridge no está conectado", "error");
+    if ((snapshot?.online ?? 0) === 0) {
+      toast("No hay ningún bridge conectado", "error");
       return;
     }
     send(button.dataset.cmd).catch(() => {});
@@ -566,7 +664,7 @@ el.sendBtn.addEventListener("click", async () => {
   const list = snapshot?.players?.list ?? [];
   const targets = list
     .filter((p) => selected.has(p.userId))
-    .map((p) => ({ userId: p.userId, username: p.username }));
+    .map((p) => ({ userId: p.userId, username: p.username, bridgeId: p.bridgeId }));
 
   if (targets.length === 0) return;
 
@@ -614,14 +712,17 @@ el.copyControl.addEventListener("click", () => copy(el.controlCode.textContent, 
 /* arranque                                                            */
 /* ------------------------------------------------------------------ */
 
+// Las cuentas atrás corren en el navegador; los bridges solo releen el
+// estado del juego cada veinte segundos.
 setInterval(() => {
-  if (snapshot?.bridge) el.metaPing.textContent = ago(snapshot.bridge.lastSeen);
-}, 5000);
-
-// La cuenta atrás corre en el navegador; el bridge solo relee el estado
-// del juego cada veinte segundos.
-setInterval(() => {
-  if (snapshot?.access?.status) renderClock();
+  if (!snapshot?.bridges?.length) return;
+  renderClock();
+  for (const row of el.bridges.children) {
+    const clockEl = row.querySelector?.(".bridge__clock");
+    if (!clockEl) continue;
+    const bridge = snapshot.bridges.find((b) => b.username === row.querySelector("b").textContent);
+    if (bridge?.access?.status === "active") clockEl.textContent = mmss(secondsLeft(bridge.access));
+  }
 }, 1000);
 
 (async function boot() {

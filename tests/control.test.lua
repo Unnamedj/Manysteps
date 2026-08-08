@@ -21,16 +21,23 @@ end
 local function stateWith(overrides)
     local state = {
         serverTime = 1,
-        bridge = { online = true, username = "Zamora", jobId = "bridge-job" },
-        time = { status = "paused" },
+        online = 1,
+        bridges = {
+            {
+                id = "77",
+                username = "Zamora",
+                online = true,
+                panelJobId = "aa11bb22-cc33-dd44-ee55-ff6677889900",
+                playerCount = 2,
+                access = { status = "active", remainingSeconds = 754, readAt = 1 },
+            },
+        },
         settings = { placeId = "96342491571673", jobId = "guardado-1234" },
-        game = { panelJobId = "aa11bb22-cc33-dd44-ee55-ff6677889900" },
         players = {
-            { userId = "156", username = "nova_rex", displayName = "Nova" },
-            { userId = "2481", username = "kiro", displayName = "Kiro" },
+            { userId = "156", username = "nova_rex", displayName = "Nova", bridgeId = "77", bridgeName = "Zamora" },
+            { userId = "2481", username = "kiro", displayName = "Kiro", bridgeId = "77", bridgeName = "Zamora" },
         },
         pending = 0,
-        access = { status = "active", remainingSeconds = 754, readAt = 1 },
         places = {
             { label = "SAB New Player", placeId = "96342491571673" },
             { label = "SAB Normal", placeId = "109983668079237" },
@@ -41,6 +48,20 @@ local function stateWith(overrides)
     for key, value in pairs(overrides or {}) do
         state[key] = value
     end
+    return state
+end
+
+--- Mismo estado pero con otro acceso en el único bridge.
+local function withAccess(access)
+    local state = stateWith()
+    state.bridges[1].access = access
+    return state
+end
+
+--- Mismo estado pero con otro Job ID en el cuadro del bridge.
+local function withPanelJob(jobId)
+    local state = stateWith()
+    state.bridges[1].panelJobId = jobId
     return state
 end
 
@@ -101,15 +122,15 @@ print("reloj de acceso")
 check("muestra cuánto queda, en minutos y segundos",
     mock.findByText("corriendo · 12:34") ~= nil)
 
-_G.__NEXT_RESPONSE = stateWith({ access = { status = "paused", remainingSeconds = 65 } })
+_G.__NEXT_RESPONSE = withAccess({ status = "paused", remainingSeconds = 65 })
 mock.runSpawned(1)
 check("pausado también dice lo que queda", mock.findByText("pausado · 1:05") ~= nil)
 
-_G.__NEXT_RESPONSE = stateWith({ access = { status = "locked", remainingSeconds = 0 } })
+_G.__NEXT_RESPONSE = withAccess({ status = "locked", remainingSeconds = 0 })
 mock.runSpawned(1)
 check("sin acceso lo dice sin reloj", mock.findByText("sin acceso") ~= nil)
 
-_G.__NEXT_RESPONSE = stateWith({ access = { status = "active", remainingSeconds = 7265 } })
+_G.__NEXT_RESPONSE = withAccess({ status = "active", remainingSeconds = 7265 })
 mock.runSpawned(1)
 check("más de una hora sale con horas", mock.findByText("corriendo · 2:01:05") ~= nil)
 
@@ -195,13 +216,13 @@ check("el valor recién mandado no lo pisa el estado viejo",
 check("y mientras tanto avisa de que está guardando",
     mock.findByText("guardando…") ~= nil)
 
-_G.__NEXT_RESPONSE = stateWith({ game = { panelJobId = "job-recien-mandado" } })
+_G.__NEXT_RESPONSE = withPanelJob("job-recien-mandado")
 mock.runSpawned(1)
 check("cuando el juego lo confirma, deja de estar pendiente",
     mock.findByText("activo en el panel del juego") ~= nil)
 
 -- Y a partir de ahí el campo vuelve a seguir al juego.
-_G.__NEXT_RESPONSE = stateWith({ game = { panelJobId = "cambiado-desde-la-web" } })
+_G.__NEXT_RESPONSE = withPanelJob("cambiado-desde-la-web")
 mock.runSpawned(1)
 check("un cambio hecho desde la web llega al mando",
     jobBox.Text == "cambiado-desde-la-web", jobBox.Text)
@@ -240,7 +261,7 @@ check("avisa si estás en otro place distinto del destino",
 
 -- Volvemos a dejar el campo como estaba para lo que viene.
 placeBox.Text = "96342491571673"
-_G.__NEXT_RESPONSE = stateWith({ game = { panelJobId = "17272727-8171" } })
+_G.__NEXT_RESPONSE = withPanelJob("17272727-8171")
 mock.runSpawned(1)
 
 ----------------------------------------------------------------------

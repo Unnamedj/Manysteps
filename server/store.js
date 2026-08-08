@@ -6,6 +6,16 @@ const MAX_QUEUE = 200;
 // que un margen justo daría desconexiones falsas — y una desconexión
 // cancela lo que haya en cola.
 const BRIDGE_TIMEOUT_MS = 28_000;
+// Cuánto se queda un bridge caído en la lista antes de desaparecer.
+const BRIDGE_FORGET_MS = 10 * 60_000;
+
+const ACCESS_STATES = new Set(["blacklisted", "permanent", "paused", "active", "locked"]);
+
+/** Los destinos que ofrece el propio panel del juego. */
+export const PLACES = [
+  { label: "SAB New Player", placeId: "96342491571673" },
+  { label: "SAB Normal", placeId: "109983668079237" },
+];
 
 /**
  * Estado central del panel. Vive en memoria: Railway reinicia el contenedor
@@ -13,63 +23,30 @@ const BRIDGE_TIMEOUT_MS = 28_000;
  * empujar al juego con un comando, así que no hace falta base de datos.
  */
 const state = {
-  bridge: {
-    online: false,
-    lastSeen: 0,
-    executor: null,
-    placeId: null,
-    jobId: null,
-    userId: null,
-    username: null,
-  },
   settings: {
-    // Lo último que el panel mandó guardar en el juego.
+    // El destino al que se manda gente. Es común a todos los bridges:
+    // la gracia es que todos empujen al mismo sitio.
     placeId: process.env.DEFAULT_PLACE_ID || "96342491571673",
     jobId: "",
     savedPlaceIdAt: 0,
     savedJobIdAt: 0,
   },
-  time: {
-    // "paused" | "running" | "unknown"
-    status: "unknown",
-    changedAt: 0,
-  },
-  // Lo que cuenta GetAccessStatus: estado y segundos que quedan de
-  // acceso. readAt permite descontar el tiempo en el navegador entre
-  // lecturas, que el bridge solo pregunta cada veinte segundos.
-  access: {
-    status: null, // blacklisted | permanent | paused | active | locked
-    remainingSeconds: 0,
-    readAt: 0,
-  },
-  players: {
-    list: [],
-    updatedAt: 0,
-  },
-  // Lo que el juego tiene de verdad, leído por el bridge. El cuadro del
-  // panel manda sobre lo guardado: es lo que usa el botón Teleport.
-  game: {
-    panelJobId: null,
-    savedJobId: null,
-    savedPlaceId: null,
-    rememberJobId: null,
-    rememberPlaceId: null,
-    updatedAt: 0,
-  },
 };
 
-/** @type {Array<object>} comandos esperando a que el bridge los recoja */
-const queue = [];
-/** @type {Map<string, object>} comandos entregados, esperando ack */
-const inflight = new Map();
+/**
+ * Un bridge por cuenta conectada. Cada uno lleva su propia cola: las
+ * órdenes de uno no pueden acabar ejecutándose en otro.
+ *
+ * @type {Map<string, object>}
+ */
+const bridges = new Map();
+
 /** @type {Array<object>} historial reciente (los últimos primero) */
 const history = [];
 /** @type {Array<object>} log de la consola (los últimos primero) */
 const logLines = [];
 
 const listeners = new Set();
-/** @type {Array<{resolve: Function, timer: NodeJS.Timeout}>} long-polls abiertos */
-const pollWaiters = [];
 
 /* ------------------------------------------------------------------ */
 /* eventos                                                             */
@@ -104,6 +81,7 @@ export function log(level, message, meta) {
     at: Date.now(),
     level, // "info" | "ok" | "warn" | "error" | "cmd"
     message: String(message),
+    bridge: meta?.bridgeName ?? null,
     meta: meta ?? null,
   };
   logLines.unshift(entry);
@@ -113,41 +91,116 @@ export function log(level, message, meta) {
 }
 
 /* ------------------------------------------------------------------ */
-/* bridge                                                              */
+/* bridges                                                             */
 /* ------------------------------------------------------------------ */
 
-export function touchBridge(info = {}) {
-  const wasOffline = !state.bridge.online;
-  state.bridge.online = true;
-  state.bridge.lastSeen = Date.now();
-  for (const key of ["executor", "placeId", "jobId", "userId", "username"]) {
-    if (info[key] !== undefined && info[key] !== null && info[key] !== "") {
-      state.bridge[key] = info[key];
-    }
-  }
-  if (wasOffline) {
-    log("ok", `Bridge conectado${info.username ? ` — ${info.username}` : ""}`);
-  }
-  emitSnapshot();
+function blankBridge(id) {
+  return {
+    id,
+    userId: null,
+    username: null,
+    executor: null,
+    placeId: null,
+    jobId: null,
+    online: false,
+    lastSeen: 0,
+    firstSeen: Date.now(),
+    // Lo que este bridge ve en su propia partida.
+    players: [],
+    playersAt: 0,
+    game: {
+      panelJobId: null,
+      savedJobId: null,
+      savedPlaceId: null,
+      updatedAt: 0,
+    },
+    access: { status: null, remainingSeconds: 0, readAt: 0 },
+    queue: [],
+    inflight: new Map(),
+    waiters: [],
+  };
 }
 
-/** Marca el bridge como caído si lleva demasiado sin dar señales. */
-export function sweepBridge() {
-  if (!state.bridge.online) return;
-  if (Date.now() - state.bridge.lastSeen <= BRIDGE_TIMEOUT_MS) return;
-  state.bridge.online = false;
-  log("warn", "Bridge desconectado (sin heartbeat)");
-  abandonPending("el bridge se desconectó");
+export function bridgeName(bridge) {
+  if (!bridge) return "?";
+  return bridge.username || (bridge.userId ? `#${bridge.userId}` : bridge.id.slice(0, 6));
+}
+
+/**
+ * Registra o refresca un bridge. La identidad es el userId de la cuenta
+ * que lo ejecuta: si esa cuenta reejecuta el script, sigue siendo el
+ * mismo bridge en vez de dejar un fantasma en la lista.
+ */
+export function touchBridge(id, info = {}) {
+  const key = String(id || info.userId || "").trim();
+  if (!key) return null;
+
+  let bridge = bridges.get(key);
+  if (!bridge) {
+    bridge = blankBridge(key);
+    bridges.set(key, bridge);
+  }
+
+  const wasOffline = !bridge.online;
+  bridge.online = true;
+  bridge.lastSeen = Date.now();
+
+  for (const field of ["executor", "placeId", "jobId", "userId", "username"]) {
+    const value = info[field];
+    if (value !== undefined && value !== null && value !== "") {
+      bridge[field] = String(value);
+    }
+  }
+  if (!bridge.userId) bridge.userId = key;
+
+  if (wasOffline) {
+    log("ok", `Bridge conectado — ${bridgeName(bridge)}`, { bridgeName: bridgeName(bridge) });
+  }
   emitSnapshot();
+  return bridge;
+}
+
+export function getBridge(id) {
+  return bridges.get(String(id || "")) || null;
+}
+
+export function onlineBridges() {
+  return [...bridges.values()].filter((b) => b.online);
+}
+
+/** Marca como caídos los bridges que llevan demasiado sin dar señales. */
+export function sweepBridges() {
+  const now = Date.now();
+  let changed = false;
+
+  for (const [id, bridge] of bridges) {
+    if (bridge.online && now - bridge.lastSeen > BRIDGE_TIMEOUT_MS) {
+      bridge.online = false;
+      log("warn", `Bridge desconectado — ${bridgeName(bridge)}`, {
+        bridgeName: bridgeName(bridge),
+      });
+      abandonPending(bridge, "el bridge se desconectó");
+      changed = true;
+    }
+
+    // Los caídos se olvidan pasado un rato, para que la lista no crezca
+    // sin fin con sesiones viejas.
+    if (!bridge.online && now - bridge.lastSeen > BRIDGE_FORGET_MS) {
+      bridges.delete(id);
+      changed = true;
+    }
+  }
+
+  if (changed) emitSnapshot();
 }
 
 /**
  * Tira lo que quedó a medias. Un teleport que se ejecuta tres minutos
  * tarde, cuando el bridge vuelve, no es lo que nadie pidió.
  */
-function abandonPending(reason) {
-  const stranded = [...queue.splice(0, queue.length), ...inflight.values()];
-  inflight.clear();
+function abandonPending(bridge, reason) {
+  const stranded = [...bridge.queue.splice(0, bridge.queue.length), ...bridge.inflight.values()];
+  bridge.inflight.clear();
 
   for (const command of stranded) {
     command.status = "error";
@@ -156,7 +209,9 @@ function abandonPending(reason) {
   }
 
   if (stranded.length > 0) {
-    log("warn", `${stranded.length} comando(s) cancelado(s): ${reason}`);
+    log("warn", `${stranded.length} comando(s) cancelado(s): ${reason}`, {
+      bridgeName: bridgeName(bridge),
+    });
   }
 }
 
@@ -164,65 +219,93 @@ function abandonPending(reason) {
 /* comandos                                                            */
 /* ------------------------------------------------------------------ */
 
-export function enqueue(type, payload = {}, source = "panel") {
-  const command = {
-    id: randomUUID(),
-    type,
-    payload,
-    source,
-    createdAt: Date.now(),
-    sentAt: 0,
-    doneAt: 0,
-    status: "queued", // queued | sent | ok | error
-    error: null,
-  };
+/**
+ * Encola una orden. `target` es el id de un bridge o "all" para que la
+ * reciban todos los conectados (una copia por cada uno: cada bridge
+ * ejecuta el remote en su propia partida).
+ */
+export function enqueue(type, payload = {}, target = "all") {
+  const targets =
+    target === "all" ? onlineBridges() : [getBridge(target)].filter((b) => b && b.online);
 
-  queue.push(command);
-  while (queue.length > MAX_QUEUE) {
-    const dropped = queue.shift();
-    log("warn", `Cola llena, se descartó ${dropped.type}`);
+  if (targets.length === 0) {
+    return { accepted: [], error: "no hay ningún bridge conectado" };
   }
 
-  pushHistory(command);
-  log("cmd", describe(command), { commandId: command.id });
+  const accepted = [];
+  for (const bridge of targets) {
+    const command = {
+      id: randomUUID(),
+      bridgeId: bridge.id,
+      bridgeName: bridgeName(bridge),
+      type,
+      payload,
+      createdAt: Date.now(),
+      sentAt: 0,
+      doneAt: 0,
+      status: "queued", // queued | sent | ok | error
+      error: null,
+    };
+
+    bridge.queue.push(command);
+    while (bridge.queue.length > MAX_QUEUE) {
+      const dropped = bridge.queue.shift();
+      log("warn", `Cola llena, se descartó ${dropped.type}`, { bridgeName: bridge.username });
+    }
+
+    pushHistory(command);
+    accepted.push(command.id);
+    releaseWaiters(bridge);
+  }
+
+  log("cmd", `${describe({ type, payload })} · ${targetLabel(target, targets)}`);
   emitSnapshot();
-  releaseWaiters();
-  return command;
+  return { accepted };
 }
 
-/** Saca todo lo pendiente y lo pasa a "en vuelo". */
-export function drainQueue() {
-  if (queue.length === 0) return [];
-  const batch = queue.splice(0, queue.length);
+function targetLabel(target, targets) {
+  if (target !== "all") return bridgeName(targets[0]);
+  return targets.length === 1 ? bridgeName(targets[0]) : `${targets.length} bridges`;
+}
+
+/** Saca todo lo pendiente de un bridge y lo pasa a "en vuelo". */
+function drainQueue(bridge) {
+  if (bridge.queue.length === 0) return [];
+  const batch = bridge.queue.splice(0, bridge.queue.length);
   const now = Date.now();
+
   for (const command of batch) {
     command.status = "sent";
     command.sentAt = now;
-    inflight.set(command.id, command);
+    bridge.inflight.set(command.id, command);
   }
   emitSnapshot();
   return batch.map((c) => ({ id: c.id, type: c.type, payload: c.payload }));
 }
 
-export function ack(results = []) {
+export function ack(bridgeId, results = []) {
+  const bridge = getBridge(bridgeId);
+  if (!bridge) return;
+
   let changed = false;
 
   for (const result of results) {
-    const command = inflight.get(result.id);
+    const command = bridge.inflight.get(result.id);
     if (!command) continue;
-    inflight.delete(result.id);
+    bridge.inflight.delete(result.id);
 
     command.status = result.ok ? "ok" : "error";
     command.error = result.ok ? null : String(result.error || "error desconocido");
     command.doneAt = Date.now();
     changed = true;
 
+    const where = bridgeName(bridge);
     if (result.ok) {
       applySideEffects(command, result.data);
-      log("ok", `${describe(command)} — hecho`, { commandId: command.id });
+      log("ok", `${describe(command)} — hecho · ${where}`, { bridgeName: where });
     } else {
-      log("error", `${describe(command)} — falló: ${command.error}`, {
-        commandId: command.id,
+      log("error", `${describe(command)} — falló: ${command.error} · ${where}`, {
+        bridgeName: where,
       });
     }
   }
@@ -230,15 +313,9 @@ export function ack(results = []) {
   if (changed) emitSnapshot();
 }
 
-/** Refleja en el estado del panel lo que el comando acaba de cambiar en el juego. */
+/** Refleja en el estado del panel lo que el comando acaba de cambiar. */
 function applySideEffects(command, data) {
   switch (command.type) {
-    case "time.pause":
-      state.time = { status: "paused", changedAt: Date.now() };
-      break;
-    case "time.resume":
-      state.time = { status: "running", changedAt: Date.now() };
-      break;
     case "settings.jobId":
       state.settings.jobId = String(command.payload.jobId ?? "");
       state.settings.savedJobIdAt = Date.now();
@@ -247,9 +324,11 @@ function applySideEffects(command, data) {
       state.settings.placeId = String(command.payload.placeId ?? "");
       state.settings.savedPlaceIdAt = Date.now();
       break;
-    case "players.refresh":
-      if (Array.isArray(data?.players)) setPlayers(data.players);
+    case "players.refresh": {
+      const bridge = getBridge(command.bridgeId);
+      if (bridge && Array.isArray(data?.players)) setPlayers(bridge.id, data.players);
       break;
+    }
     default:
       break;
   }
@@ -287,30 +366,33 @@ export function describe(command) {
 /* ------------------------------------------------------------------ */
 
 /**
- * Espera hasta `waitMs` a que haya trabajo. Devuelve los comandos listos,
- * o un array vacío si se agotó el tiempo (el bridge vuelve a llamar).
+ * Espera hasta `waitMs` a que haya trabajo para ese bridge. Devuelve los
+ * comandos listos, o vacío si se agotó el tiempo (el bridge repite).
  */
-export function waitForCommands(waitMs) {
-  const ready = drainQueue();
+export function waitForCommands(bridgeId, waitMs) {
+  const bridge = getBridge(bridgeId);
+  if (!bridge) return Promise.resolve([]);
+
+  const ready = drainQueue(bridge);
   if (ready.length > 0) return Promise.resolve(ready);
 
   return new Promise((resolve) => {
     const waiter = { resolve: null, timer: null };
     const finish = () => {
       clearTimeout(waiter.timer);
-      const index = pollWaiters.indexOf(waiter);
-      if (index !== -1) pollWaiters.splice(index, 1);
-      resolve(drainQueue());
+      const index = bridge.waiters.indexOf(waiter);
+      if (index !== -1) bridge.waiters.splice(index, 1);
+      resolve(drainQueue(bridge));
     };
     waiter.resolve = finish;
     waiter.timer = setTimeout(finish, waitMs);
-    pollWaiters.push(waiter);
+    bridge.waiters.push(waiter);
   });
 }
 
-function releaseWaiters() {
-  while (pollWaiters.length > 0) {
-    pollWaiters.pop().resolve();
+function releaseWaiters(bridge) {
+  while (bridge.waiters.length > 0) {
+    bridge.waiters.pop().resolve();
   }
 }
 
@@ -318,7 +400,10 @@ function releaseWaiters() {
 /* jugadores                                                           */
 /* ------------------------------------------------------------------ */
 
-export function setPlayers(rawList) {
+export function setPlayers(bridgeId, rawList) {
+  const bridge = getBridge(bridgeId);
+  if (!bridge) return [];
+
   const seen = new Set();
   const list = [];
 
@@ -336,73 +421,123 @@ export function setPlayers(rawList) {
     });
   }
 
-  list.sort((a, b) => a.displayName.localeCompare(b.displayName));
-  state.players = { list, updatedAt: Date.now() };
+  bridge.players = list;
+  bridge.playersAt = Date.now();
   emitSnapshot();
   return list;
+}
+
+/**
+ * Lista única para el panel: junta lo que ve cada bridge, quita a las
+ * propias cuentas que están haciendo de bridge — no tiene sentido
+ * ofrecerte teletransportar a tus propios operadores — y anota qué
+ * bridge puede alcanzar a cada jugador.
+ */
+export function aggregatedPlayers() {
+  const operators = new Set();
+  for (const bridge of bridges.values()) {
+    if (bridge.userId) operators.add(String(bridge.userId));
+  }
+
+  const byUserId = new Map();
+
+  for (const bridge of onlineBridges()) {
+    for (const player of bridge.players) {
+      if (operators.has(player.userId)) continue;
+
+      const existing = byUserId.get(player.userId);
+      if (existing) {
+        existing.bridgeCount += 1;
+        continue;
+      }
+
+      byUserId.set(player.userId, {
+        ...player,
+        bridgeId: bridge.id,
+        bridgeName: bridgeName(bridge),
+        bridgeCount: 1,
+      });
+    }
+  }
+
+  return [...byUserId.values()].sort((a, b) => a.displayName.localeCompare(b.displayName));
+}
+
+/* ------------------------------------------------------------------ */
+/* estado del juego por bridge                                         */
+/* ------------------------------------------------------------------ */
+
+export function setGameState(bridgeId, raw) {
+  const bridge = getBridge(bridgeId);
+  if (!bridge || !raw || typeof raw !== "object") return;
+
+  const read = (value) => (value === undefined || value === null ? null : String(value));
+
+  bridge.game = {
+    panelJobId: read(raw.panelJobId),
+    savedJobId: read(raw.savedJobId),
+    savedPlaceId: read(raw.savedPlaceId),
+    updatedAt: Date.now(),
+  };
+
+  const access = raw.access;
+  if (access && ACCESS_STATES.has(access.status)) {
+    bridge.access = {
+      status: access.status,
+      remainingSeconds: Math.max(0, Number(access.remainingSeconds) || 0),
+      readAt: Date.now(),
+    };
+  }
+
+  emitSnapshot();
 }
 
 /* ------------------------------------------------------------------ */
 /* snapshot                                                            */
 /* ------------------------------------------------------------------ */
 
-const ACCESS_STATES = new Set(["blacklisted", "permanent", "paused", "active", "locked"]);
-
-/** Los destinos que ofrece el propio panel del juego. */
-export const PLACES = [
-  { label: "SAB New Player", placeId: "96342491571673" },
-  { label: "SAB Normal", placeId: "109983668079237" },
-];
-
-export function setGameState(raw) {
-  if (!raw || typeof raw !== "object") return;
-
-  const read = (value) => (value === undefined || value === null ? null : String(value));
-
-  state.game = {
-    panelJobId: read(raw.panelJobId),
-    savedJobId: read(raw.savedJobId),
-    savedPlaceId: read(raw.savedPlaceId),
-    rememberJobId: raw.rememberJobId === undefined ? null : raw.rememberJobId === true,
-    rememberPlaceId: raw.rememberPlaceId === undefined ? null : raw.rememberPlaceId === true,
-    updatedAt: Date.now(),
+function publicBridge(bridge) {
+  return {
+    id: bridge.id,
+    userId: bridge.userId,
+    username: bridgeName(bridge),
+    executor: bridge.executor,
+    placeId: bridge.placeId,
+    jobId: bridge.jobId,
+    online: bridge.online,
+    lastSeen: bridge.lastSeen,
+    panelJobId: bridge.game.panelJobId,
+    access: { ...bridge.access },
+    playerCount: bridge.players.length,
+    pending: bridge.queue.length + bridge.inflight.size,
   };
-
-  // El estado real del reloj manda sobre lo que dedujimos del último
-  // botón pulsado: esto viene del servidor del juego.
-  const access = raw.access;
-  if (access && ACCESS_STATES.has(access.status)) {
-    state.access = {
-      status: access.status,
-      remainingSeconds: Math.max(0, Number(access.remainingSeconds) || 0),
-      readAt: Date.now(),
-    };
-
-    if (access.status === "paused") {
-      state.time = { status: "paused", changedAt: state.time.changedAt || Date.now() };
-    } else if (access.status === "active" || access.status === "permanent") {
-      state.time = { status: "running", changedAt: state.time.changedAt || Date.now() };
-    }
-  }
-
-  emitSnapshot();
 }
 
 export function snapshot() {
+  const list = [...bridges.values()].sort((a, b) => {
+    if (a.online !== b.online) return a.online ? -1 : 1;
+    return bridgeName(a).localeCompare(bridgeName(b));
+  });
+
+  const players = aggregatedPlayers();
+  let pending = 0;
+  for (const bridge of bridges.values()) {
+    pending += bridge.queue.length + bridge.inflight.size;
+  }
+
   return {
     serverTime: Date.now(),
-    bridge: { ...state.bridge },
+    bridges: list.map(publicBridge),
+    online: list.filter((b) => b.online).length,
     settings: { ...state.settings },
-    time: { ...state.time },
-    access: { ...state.access },
     places: PLACES,
-    players: { ...state.players },
-    game: { ...state.game },
-    pending: queue.length + inflight.size,
+    players: { list: players, updatedAt: Date.now() },
+    pending,
     history: history.slice(0, 20).map((c) => ({
       id: c.id,
       type: c.type,
       label: describe(c),
+      bridgeName: c.bridgeName,
       status: c.status,
       createdAt: c.createdAt,
       error: c.error,

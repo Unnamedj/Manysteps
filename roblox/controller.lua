@@ -78,6 +78,17 @@ local function statusOf(response)
 end
 
 --- Petición JSON. Devuelve ok, tabla|mensajeDeError.
+-- Con varios bridges conectados a la vez, el panel necesita saber cuál
+-- habla en cada petición: la cuenta que ejecuta el script es la
+-- identidad, así que reejecutarlo no deja un fantasma en la lista.
+local BRIDGE_ID = (function()
+    local player = Players.LocalPlayer
+    if player and player.UserId then
+        return string.format("%.0f", player.UserId)
+    end
+    return "anon-" .. tostring(math.random(100000, 999999))
+end)()
+
 local function httpJson(method, pathname, body, timeoutHint)
     local options = {
         Url = BASE_URL .. pathname,
@@ -86,6 +97,7 @@ local function httpJson(method, pathname, body, timeoutHint)
             ["Content-Type"] = "application/json",
             ["Accept"] = "application/json",
             ["x-bridge-key"] = BRIDGE_KEY,
+            ["x-bridge-id"] = BRIDGE_ID,
         },
         Timeout = timeoutHint or 30,
     }

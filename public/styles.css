@@ -837,6 +837,121 @@ body {
 }
 
 /* ================================================================
+   bridges
+   ================================================================ */
+
+.bridges {
+  display: grid;
+  gap: 3px;
+  padding: 8px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.bridge {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 9px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease;
+}
+
+.bridge:hover {
+  background: var(--surface-2);
+  border-color: var(--line);
+}
+
+.bridge[data-selected="1"] {
+  background: rgba(198, 242, 78, 0.07);
+  border-color: rgba(198, 242, 78, 0.35);
+}
+
+.bridge[data-online="0"] {
+  opacity: 0.45;
+}
+
+.bridge__who {
+  display: grid;
+  line-height: 1.25;
+  min-width: 0;
+  flex: 1;
+}
+
+.bridge__who b {
+  font-size: 12.5px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bridge__who span {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bridge__clock {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.bridge__clock[data-state="paused"] {
+  color: var(--amber);
+}
+.bridge__clock[data-state="active"] {
+  color: var(--acid-dim);
+}
+.bridge__clock[data-state="locked"],
+.bridge__clock[data-state="blacklisted"] {
+  color: var(--red);
+}
+
+.bridges__foot {
+  padding: 8px 12px;
+  border-top: 1px solid var(--line);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--text-faint);
+}
+
+.bridges__empty {
+  padding: 22px 12px;
+  text-align: center;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+/* Marca de qué bridge ve a cada jugador. */
+.tagline {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  color: var(--text-faint);
+  border: 1px solid var(--line);
+  border-radius: 99px;
+  padding: 0 6px;
+  margin-left: 6px;
+  vertical-align: 1px;
+}
+
+/* ================================================================
    roster
    ================================================================ */
 
