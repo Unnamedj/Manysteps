@@ -50,7 +50,14 @@ const COMMANDS = {
 
   "settings.jobId"(payload) {
     const jobId = String(payload.jobId ?? "").trim();
-    if (!JOB_RE.test(jobId)) throw new Error("jobId inválido");
+    if (!JOB_RE.test(jobId)) {
+      // Decir qué llegó ahorra mucho tiempo cuando se pega un Job ID
+      // con comillas, espacios o algún carácter invisible de más.
+      throw new Error(
+        `Job ID inválido: "${jobId.slice(0, 60)}" (${jobId.length} caracteres). ` +
+          `Se esperan solo letras, números y guiones.`,
+      );
+    }
     return { jobId };
   },
 

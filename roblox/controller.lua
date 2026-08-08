@@ -178,14 +178,20 @@ local handlers = {
         return { state = Remotes.resumeTime() }
     end,
 
+    -- Los dos ajustes van con eco al log: si el juego no se entera del
+    -- cambio, lo primero es saber qué salió exactamente por el remote.
     ["settings.jobId"] = function(payload)
-        Remotes.saveJobId(payload.jobId)
-        return { jobId = payload.jobId }
+        local jobId = tostring(payload.jobId)
+        report("info", ('SaveAdminSettings("savedJobId", "%s") · %d caracteres'):format(jobId, #jobId))
+        Remotes.saveJobId(jobId)
+        return { jobId = jobId }
     end,
 
     ["settings.placeId"] = function(payload)
-        Remotes.savePlaceId(payload.placeId)
-        return { placeId = payload.placeId }
+        local placeId = tostring(payload.placeId)
+        report("info", ('SaveAdminSettings("savedPlaceId", "%s")'):format(placeId))
+        Remotes.savePlaceId(placeId)
+        return { placeId = placeId }
     end,
 
     ["teleport.send"] = function(payload)

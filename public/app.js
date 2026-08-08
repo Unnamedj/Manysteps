@@ -24,6 +24,7 @@ const el = {
   jobForm: $("jobForm"),
   jobInput: $("jobInput"),
   jobHint: $("jobHint"),
+  useCurrentJob: $("useCurrentJob"),
 
   metaUser: $("metaUser"),
   metaExecutor: $("metaExecutor"),
@@ -404,6 +405,20 @@ el.jobForm.addEventListener("submit", async (event) => {
   await send("settings.jobId", { jobId: el.jobInput.value.trim() }).catch(() => {});
   delete el.jobInput.dataset.dirty;
   renderDestination();
+});
+
+// Copia el JobId del servidor donde corre el bridge: es el destino que
+// se quiere el 90% de las veces y evita teclear un UUID a mano.
+el.useCurrentJob.addEventListener("click", () => {
+  const jobId = snapshot?.bridge?.jobId;
+  if (!jobId) {
+    toast("El bridge todavía no ha reportado su Job ID", "error");
+    return;
+  }
+  el.jobInput.value = jobId;
+  el.jobInput.dataset.dirty = "1";
+  renderDestination();
+  toast("Job ID del servidor actual — pulsa guardar", "info");
 });
 
 for (const input of [el.placeInput, el.jobInput]) {

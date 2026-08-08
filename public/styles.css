@@ -693,6 +693,15 @@ body {
   color: var(--acid);
 }
 
+/* Con dos botones en la fila, solo el primero empuja hacia la derecha. */
+.field__top .linkbtn + .linkbtn {
+  margin-left: 14px;
+}
+
+.linkbtn--quiet {
+  color: var(--text-faint);
+}
+
 .linkbtn:focus-visible {
   outline: 1px solid var(--acid);
   outline-offset: 3px;
