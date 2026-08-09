@@ -283,7 +283,7 @@ app.post("/api/bridge/players", requireBridgeAuth, (req, res) => {
 app.post("/api/bridge/scan", requireBridgeAuth, (req, res) => {
   const id = bridgeIdOf(req);
   store.touchBridge(id);
-  const count = store.setScan(id, req.body?.items);
+  const count = store.setScan(id, req.body?.items, req.body?.source);
   res.json({ ok: true, count });
 });
 

@@ -1168,6 +1168,30 @@ body {
   flex-shrink: 0;
 }
 
+.scan__trait {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  color: var(--blue);
+  border: 1px solid rgba(111, 179, 255, 0.28);
+  border-radius: 99px;
+  padding: 0 6px;
+  flex-shrink: 0;
+  font-style: normal;
+}
+
+.scan__gen {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--acid-dim);
+  flex-shrink: 0;
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+
+.scan__gen + .scan__plot {
+  margin-left: 10px;
+}
+
 .scan__owner {
   font-family: var(--mono);
   font-size: 11px;

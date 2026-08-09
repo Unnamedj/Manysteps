@@ -249,6 +249,20 @@ const ACCESS_LABEL = {
   blacklisted: "bloqueado",
 };
 
+/** 1234567 → "1.23M". Los números del juego crecen rápido. */
+function compact(value) {
+  const n = Number(value) || 0;
+  if (n < 1000) return String(Math.round(n));
+  const units = ["K", "M", "B", "T", "Qa", "Qi"];
+  let scaled = n;
+  let unit = -1;
+  while (scaled >= 1000 && unit < units.length - 1) {
+    scaled /= 1000;
+    unit += 1;
+  }
+  return `${scaled >= 100 ? scaled.toFixed(0) : scaled.toFixed(2)}${units[unit]}`;
+}
+
 function mmss(seconds) {
   const total = Math.max(0, Math.round(seconds));
   const h = Math.floor(total / 3600);
@@ -511,12 +525,19 @@ function renderScan() {
     byOwner.get(key).push(item);
   }
 
-  // Quien más tiene, primero; los plots libres al final.
+  // Quien más genera, primero — y si nadie genera, quien más tiene.
+  // Los plots libres, al final.
+  const totalOf = (items) => items.reduce((sum, i) => sum + (Number(i.generation) || 0), 0);
+
   const owners = [...byOwner.entries()].sort((a, b) => {
     const aFree = a[0] === "Unclaimed";
     const bFree = b[0] === "Unclaimed";
     if (aFree !== bFree) return aFree ? 1 : -1;
-    return b[1].length - a[1].length || a[0].localeCompare(b[0]);
+    return (
+      totalOf(b[1]) - totalOf(a[1]) ||
+      b[1].length - a[1].length ||
+      a[0].localeCompare(b[0])
+    );
   });
 
   // Un dueño que además está en la lista de teleport se puede mandar
@@ -553,8 +574,14 @@ function renderScan() {
       head.append(mark);
     }
 
+    const total = items.reduce((sum, i) => sum + (Number(i.generation) || 0), 0);
+
     const count = document.createElement("span");
-    count.textContent = `${items.length} objeto${items.length === 1 ? "" : "s"}`;
+    count.textContent =
+      total > 0
+        ? `${items.length} · ${compact(total)}/s`
+        : `${items.length} objeto${items.length === 1 ? "" : "s"}`;
+    count.title = `${items.length} objeto${items.length === 1 ? "" : "s"}`;
     head.append(count);
 
     el.scanList.append(head);
@@ -575,9 +602,23 @@ function renderScan() {
         row.append(mutation);
       }
 
+      for (const trait of item.traits ?? []) {
+        const tag = document.createElement("i");
+        tag.className = "scan__trait";
+        tag.textContent = trait;
+        row.append(tag);
+      }
+
+      if (item.generation > 0) {
+        const gen = document.createElement("span");
+        gen.className = "scan__gen";
+        gen.textContent = `${compact(item.generation)}/s`;
+        row.append(gen);
+      }
+
       const plot = document.createElement("span");
       plot.className = "scan__plot";
-      plot.textContent = item.plot;
+      plot.textContent = item.slot > 0 ? `${item.plot} · ${item.slot}` : item.plot;
       plot.title = `visto por ${item.bridgeName}`;
       row.append(plot);
 
@@ -585,10 +626,15 @@ function renderScan() {
     }
   }
 
+  const grand = totalOf(visible);
+  const origin = scan.source === "workspace" ? " · leído del Workspace" : "";
+
   el.scanFoot.textContent = scan.updatedAt
     ? `${visible.length} objeto${visible.length === 1 ? "" : "s"} · ${owners.length} dueño${
         owners.length === 1 ? "" : "s"
-      } · actualizado ${ago(scan.updatedAt)}`
+      }${grand > 0 ? ` · ${compact(grand)}/s en total` : ""} · ${ago(
+        scan.updatedAt,
+      )}${origin}`
     : "sin datos todavía";
 }
 

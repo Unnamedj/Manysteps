@@ -92,15 +92,32 @@ juego — no lo último que se mandó.
 
 ## Escáner de plots
 
-Un bridge que esté en el place **78906538690694** escanea los plots y
-manda al panel qué hay en cada uno: objeto, mutación, plot y dueño. Se ve
-en la pestaña **Escaneo**, junto a la de jugadores.
+Un bridge que esté en el place **78906538690694** lee qué hay en cada
+plot y lo manda al panel. Se ve en la pestaña **Escaneo**, junto a la de
+jugadores.
+
+Los datos salen del paquete **Synchronizer** del propio juego: dentro de
+los upvalues de su `Get` está la tabla de canales, y cada canal lleva su
+`CacheTable` con el dueño del plot y su `AnimalList`. De ahí sale el
+slot, el animal, la mutación, los traits y la **generación**, calculada
+con `Datas.Animals`, `Datas.Mutations` y `Datas.Traits` igual que lo hace
+el juego:
+
+```
+generación = Generation del animal × (1 + Modifier de la mutación
+                                        + MultiplierModifier de cada trait)
+```
+
+Si ese paquete no aparece — otro juego, otra versión — se cae a un
+barrido del `Workspace`, que da menos (sin traits ni generación) pero da
+algo. El pie de la lista avisa cuando va por ese respaldo.
 
 Solo manda datos. No dibuja nada dentro del juego: ni ESP, ni carteles,
 ni bucles de render. En cualquier otro place el escáner ni se carga.
 
 La lista va **agrupada por dueño**: cada persona con sus cosas debajo, el
-que más tiene primero y los plots libres al final. Si ese dueño está
+que **más genera** primero y los plots libres al final. Cada cabecera
+suma lo que produce esa persona, y el pie el total de todos. Si ese dueño está
 además en la lista de jugadores, sale marcado como **en la lista** y al
 pulsarlo se selecciona para teleport — de ver qué tiene a mandarlo, en un
 clic.

@@ -129,7 +129,7 @@ function blankBridge(id) {
     },
     access: { status: null, remainingSeconds: 0, readAt: 0 },
     // Lo último que escaneó, si está en el place del escáner.
-    scan: { items: [], updatedAt: 0, supported: false },
+    scan: { items: [], updatedAt: 0, supported: false, source: null },
     queue: [],
     inflight: new Map(),
     waiters: [],
@@ -494,7 +494,7 @@ export function aggregatedPlayers() {
 const MAX_SCAN_ITEMS = 400;
 
 /** Guarda el escaneo de plots que manda un bridge. */
-export function setScan(bridgeId, rawItems) {
+export function setScan(bridgeId, rawItems, source) {
   const bridge = getBridge(bridgeId);
   if (!bridge) return 0;
 
@@ -505,15 +505,29 @@ export function setScan(bridgeId, rawItems) {
     if (items.length >= MAX_SCAN_ITEMS) break;
     const name = text(raw?.name, 60).trim();
     if (!name) continue;
+
+    const traits = Array.isArray(raw?.traits)
+      ? raw.traits.slice(0, 6).map((t) => text(t, 24).trim()).filter(Boolean)
+      : [];
+
     items.push({
       name,
       plot: text(raw?.plot, 40).trim(),
       owner: text(raw?.owner, 40).trim() || "Unclaimed",
       mutation: text(raw?.mutation, 30).trim(),
+      traits,
+      slot: Number(raw?.slot) || 0,
+      generation: Number.isFinite(Number(raw?.generation)) ? Number(raw.generation) : 0,
     });
   }
 
-  bridge.scan = { items, updatedAt: Date.now(), supported: true };
+  bridge.scan = {
+    items,
+    updatedAt: Date.now(),
+    supported: true,
+    // "synchronizer" (los datos buenos) o "workspace" (el respaldo).
+    source: source === "workspace" ? "workspace" : "synchronizer",
+  };
   emitSnapshot();
   return items.length;
 }
@@ -609,17 +623,23 @@ export function snapshot() {
 export function aggregatedScan() {
   const items = [];
   let updatedAt = 0;
+  let source = null;
 
   for (const bridge of onlineBridges()) {
     if (!bridge.scan.supported) continue;
     updatedAt = Math.max(updatedAt, bridge.scan.updatedAt);
+    source = source ?? bridge.scan.source;
     for (const item of bridge.scan.items) {
       items.push({ ...item, bridgeName: bridgeName(bridge), bridgeId: bridge.id });
     }
   }
 
-  items.sort((a, b) => a.owner.localeCompare(b.owner) || a.name.localeCompare(b.name));
-  return { items, updatedAt };
+  // Dentro de cada plot, por slot; si no hay slots, por nombre.
+  items.sort(
+    (a, b) =>
+      a.owner.localeCompare(b.owner) || a.slot - b.slot || a.name.localeCompare(b.name),
+  );
+  return { items, updatedAt, source };
 }
 
 export function recentLog() {

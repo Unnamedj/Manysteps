@@ -287,13 +287,13 @@ local function pushScan()
         return false
     end
 
-    local ok, items = pcall(Scanner.scan)
+    local ok, items, source = pcall(Scanner.scan)
     if not ok then
         report("error", "escaneo falló: " .. tostring(items))
         return false
     end
 
-    httpJson("POST", "/api/bridge/scan", { items = items })
+    httpJson("POST", "/api/bridge/scan", { items = items, source = source })
     return true, items
 end
 
