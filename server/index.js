@@ -43,6 +43,18 @@ const COMMANDS = {
   "players.refresh": () => ({}),
   "scan.refresh": () => ({}),
 
+  /* Mover al propio bridge de place. El jobId es opcional: sin él cae en
+     cualquier servidor de ese place. */
+  "bridge.teleport"(payload) {
+    const placeId = String(payload.placeId ?? "").trim();
+    if (!ID_RE.test(placeId)) throw new Error("placeId debe ser numérico");
+
+    const jobId = String(payload.jobId ?? "").trim();
+    if (jobId && !JOB_RE.test(jobId)) throw new Error("jobId inválido");
+
+    return jobId ? { placeId, jobId } : { placeId };
+  },
+
   "settings.placeId"(payload) {
     const placeId = String(payload.placeId ?? "").trim();
     if (!ID_RE.test(placeId)) throw new Error("placeId debe ser numérico");
@@ -125,6 +137,7 @@ app.get("/api/control/state", requirePanelAuth, (_req, res) => {
       scanCount: b.scanCount,
     })),
     places: state.places,
+    bridgePlaces: state.bridgePlaces,
     settings: { placeId: state.settings.placeId, jobId: state.settings.jobId },
     players: state.players.list,
     pending: state.pending,

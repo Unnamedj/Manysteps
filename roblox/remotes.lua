@@ -315,6 +315,34 @@ function Remotes.teleport(userId, placeId, jobId)
 end
 
 ----------------------------------------------------------------------
+-- mover el propio bridge
+----------------------------------------------------------------------
+
+--- Manda a la cuenta que ejecuta el bridge a otro place.
+---
+--- Esto no es un remote del juego: es TeleportService, o sea el propio
+--- cliente cambiándose de sitio. Sirve para colocar a los operadores
+--- donde hagan falta — al place del escáner, o al de los remotes — sin
+--- tener que ir cuenta por cuenta.
+function Remotes.moveSelf(placeId, jobId)
+    local TeleportService = game:GetService("TeleportService")
+    local player = Players.LocalPlayer
+    if not player then
+        error("no hay LocalPlayer al que mover", 0)
+    end
+
+    local target = toId(placeId, "placeId")
+
+    if type(jobId) == "string" and jobId ~= "" then
+        TeleportService:TeleportToPlaceInstance(target, jobId, player)
+        return { placeId = target, jobId = jobId }
+    end
+
+    TeleportService:Teleport(target, player)
+    return { placeId = target }
+end
+
+----------------------------------------------------------------------
 -- candidatos
 ----------------------------------------------------------------------
 

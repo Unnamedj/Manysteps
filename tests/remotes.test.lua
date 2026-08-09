@@ -70,10 +70,23 @@ local localPlayer = {
     end,
 }
 
+local teleports = {}
+local teleportService = {
+    Teleport = function(_, placeId, player)
+        table.insert(teleports, { kind = "Teleport", placeId = placeId, player = player })
+    end,
+    TeleportToPlaceInstance = function(_, placeId, jobId, player)
+        table.insert(teleports, {
+            kind = "TeleportToPlaceInstance", placeId = placeId, jobId = jobId, player = player,
+        })
+    end,
+}
+
 game = {
     GetService = function(self, name)
         if name == "ReplicatedStorage" then return replicatedStorage end
         if name == "Players" then return { LocalPlayer = localPlayer } end
+        if name == "TeleportService" then return teleportService end
         error("servicio no mockeado: " .. name)
     end,
 }
@@ -219,6 +232,32 @@ check("un success=false se convierte en error, no en 'hecho'",
 _G.__TOGGLE_RESULT = { success = true }
 check("success=true pasa sin ruido", (pcall(Remotes.pauseTime)))
 _G.__TOGGLE_RESULT = nil
+
+----------------------------------------------------------------------
+print("mover el propio bridge")
+
+Remotes.moveSelf("78906538690694")
+local move = teleports[#teleports]
+check("sin jobId usa Teleport(placeId, jugador)",
+    move and move.kind == "Teleport" and move.placeId == 78906538690694
+    and move.player == localPlayer,
+    move and (move.kind .. " " .. tostring(move.placeId)))
+
+check("el placeId va como número, no como texto",
+    type(move.placeId) == "number", type(move.placeId))
+
+Remotes.moveSelf("101017811878308", "aa11bb22-cc33-dd44")
+move = teleports[#teleports]
+check("con jobId cae en ese servidor concreto",
+    move.kind == "TeleportToPlaceInstance" and move.placeId == 101017811878308
+    and move.jobId == "aa11bb22-cc33-dd44",
+    move.kind .. " " .. tostring(move.placeId) .. " " .. tostring(move.jobId))
+
+Remotes.moveSelf("78906538690694", "")
+check("un jobId vacío no cuenta como servidor",
+    teleports[#teleports].kind == "Teleport", teleports[#teleports].kind)
+
+check("rechaza un place que no es número", not pcall(Remotes.moveSelf, "por-ahi"))
 
 ----------------------------------------------------------------------
 print("candidatos")

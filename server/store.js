@@ -11,12 +11,20 @@ const BRIDGE_FORGET_MS = 10 * 60_000;
 
 const ACCESS_STATES = new Set(["blacklisted", "permanent", "paused", "active", "locked"]);
 
-/** Los destinos que ofrece el propio panel del juego. */
+/** Destinos de teleport para los jugadores: los del panel del juego. */
 export const PLACES = [
   { label: "SAB New Player", placeId: "96342491571673" },
   { label: "SAB Normal", placeId: "109983668079237" },
-  { label: "Brainrots", placeId: "78906538690694" },
-  { label: "Remotes", placeId: "101017811878308" },
+];
+
+/**
+ * A dónde se puede mandar a los propios bridges. No son destinos de
+ * jugadores: son los places donde uno quiere tener a sus operadores, sea
+ * para escanear o para llegar a los remotes.
+ */
+export const BRIDGE_PLACES = [
+  { label: "Brainrots", placeId: "78906538690694", note: "el place del escáner" },
+  { label: "Remotes", placeId: "101017811878308", note: "donde funcionan los remotes" },
 ];
 
 /** El place donde el escáner de plots tiene sentido. */
@@ -331,6 +339,11 @@ function applySideEffects(command, data) {
       state.settings.placeId = String(command.payload.placeId ?? "");
       state.settings.savedPlaceIdAt = Date.now();
       break;
+    case "bridge.teleport": {
+      const bridge = getBridge(command.bridgeId);
+      if (bridge) bridge.placeId = String(command.payload.placeId ?? bridge.placeId);
+      break;
+    }
     case "players.refresh": {
       const bridge = getBridge(command.bridgeId);
       if (bridge && Array.isArray(data?.players)) setPlayers(bridge.id, data.players);
@@ -359,6 +372,10 @@ export function describe(command) {
       return `Guardar Place ID → ${p.placeId || "(vacío)"}`;
     case "players.refresh":
       return "Refrescar lista de jugadores";
+    case "bridge.teleport":
+      return `Mover bridge al place ${p.placeId}`;
+    case "scan.refresh":
+      return "Escanear plots";
     case "teleport.send":
       return `Teleport ${p.username || p.userId} → ${p.placeId} / ${
         p.jobId ? p.jobId.slice(0, 8) + "…" : "(sin job)"
@@ -572,6 +589,7 @@ export function snapshot() {
     online: list.filter((b) => b.online).length,
     settings: { ...state.settings },
     places: PLACES,
+    bridgePlaces: BRIDGE_PLACES,
     players: { list: players, updatedAt: Date.now() },
     scan: aggregatedScan(),
     pending,

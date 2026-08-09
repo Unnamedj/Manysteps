@@ -30,6 +30,7 @@ const el = {
   bridges: $("bridges"),
   bridgeTag: $("bridgeTag"),
   targetNote: $("targetNote"),
+  bridgePlaces: $("bridgePlaces"),
 
   roster: $("roster"),
   rosterCount: $("rosterCount"),
@@ -216,6 +217,7 @@ function applySnapshot(state) {
       : `${state.online} en línea`;
 
   renderBridges(state.bridges || []);
+  renderBridgePlaces(state.bridgePlaces || []);
 
   // reloj del juego
   renderClock();
@@ -306,6 +308,43 @@ function renderClock() {
     access.status === "active" || access.status === "paused"
       ? `${label} · ${mmss(secondsLeft(access))}`
       : label;
+}
+
+/**
+ * Botones para mover a los propios bridges de place. Van al destino que
+ * esté elegido arriba: todos, o solo uno.
+ */
+function renderBridgePlaces(places) {
+  const signature = places.map((p) => p.placeId).join(",");
+  if (el.bridgePlaces.dataset.signature === signature) return;
+  el.bridgePlaces.dataset.signature = signature;
+
+  el.bridgePlaces.replaceChildren();
+
+  for (const place of places) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = place.label;
+    button.title = `Mover ${
+      target === "all" ? "todos los bridges" : "el bridge elegido"
+    } a ${place.label} — ${place.note ?? place.placeId}`;
+
+    button.addEventListener("click", async () => {
+      const who =
+        target === "all"
+          ? `${snapshot?.online ?? 0} bridge(s)`
+          : (snapshot?.bridges ?? []).find((b) => b.id === target)?.username || "el bridge";
+
+      try {
+        await send("bridge.teleport", { placeId: place.placeId });
+        toast(`Moviendo ${who} a ${place.label}`, "ok");
+      } catch {
+        /* el toast de error ya lo pone send() */
+      }
+    });
+
+    el.bridgePlaces.append(button);
+  }
 }
 
 /** Lista de bridges conectados y a cuál se le habla. */

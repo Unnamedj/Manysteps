@@ -109,16 +109,33 @@ Un bridge puede escanear aunque ese juego no tenga `AdminEvents` — sirve
 solo para mirar. Y al revés: el que ejecuta remotes no escanea si no está
 en ese place. En el panel se distingue cuál hace qué.
 
-Los cuatro destinos disponibles para teleport son:
+## Mover a los propios bridges
+
+Aparte de teletransportar jugadores, se puede mover a **las cuentas que
+ejecutan el bridge**. En la sección Bridges hay una fila **Mover a** con
+los dos places donde suelen hacer falta:
+
+| Nombre | Place ID | Para qué |
+| --- | --- | --- |
+| Brainrots | `78906538690694` | el place del escáner |
+| Remotes | `101017811878308` | donde funcionan los remotes |
+
+Va al destino que tengas elegido arriba: con *Todos* se mueven todos los
+bridges de golpe, y con uno elegido, solo ese. Por dentro no es un remote
+del juego sino `TeleportService`, o sea el propio cliente cambiándose de
+sitio. Al hacerlo el bridge se va del servidor, así que lo verás caer y
+volver a conectar: es lo esperado.
+
+No confundir con los **destinos de teleport de jugadores**, que son los
+del panel del juego y siguen siendo:
 
 | Nombre | Place ID |
 | --- | --- |
 | SAB New Player | `96342491571673` |
 | SAB Normal | `109983668079237` |
-| Brainrots | `78906538690694` |
-| Remotes | `101017811878308` |
 
-Se cambian en `PLACES`, en `server/store.js`.
+Unos están en `PLACES` y los otros en `BRIDGE_PLACES`, los dos en
+`server/store.js`.
 
 ## Estructura
 

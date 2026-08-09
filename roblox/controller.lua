@@ -351,6 +351,14 @@ local handlers = {
         return { userId = payload.userId }
     end,
 
+    -- Mover el propio bridge. Al hacerlo se va del servidor actual, así
+    -- que el panel lo verá caer y volver: es lo esperado.
+    ["bridge.teleport"] = function(payload)
+        local placeId = tostring(payload.placeId)
+        report("info", "moviendo este bridge al place " .. placeId)
+        return Remotes.moveSelf(placeId, payload.jobId)
+    end,
+
     ["scan.refresh"] = function()
         if not Scanner then
             error("este bridge no escanea (no está en el place del escáner)", 0)
