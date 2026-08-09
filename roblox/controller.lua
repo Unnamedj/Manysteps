@@ -359,6 +359,41 @@ local handlers = {
         return Remotes.moveSelf(placeId, payload.jobId)
     end,
 
+    -- Saltar a otro servidor del mismo place. La lista de servidores la
+    -- pedimos aquí porque desde el juego no se puede consultar esa API.
+    ["bridge.hop"] = function()
+        local url = ("https://games.roblox.com/v1/games/%s/servers/Public?limit=100")
+            :format(string.format("%.0f", game.PlaceId))
+
+        local ok, response = pcall(httpRequest, {
+            Url = url,
+            Method = "GET",
+            Headers = { ["Accept"] = "application/json" },
+        })
+        if not ok then
+            error("no se pudo pedir la lista de servidores: " .. tostring(response), 0)
+        end
+
+        local decoded, parsed = pcall(HttpService.JSONDecode, HttpService, response.Body or "")
+        if not decoded or type(parsed) ~= "table" or type(parsed.data) ~= "table" then
+            error("la lista de servidores no vino en JSON", 0)
+        end
+
+        local here = tostring(game.JobId)
+        local candidates = {}
+        for _, server in ipairs(parsed.data) do
+            local id = tostring(server.id or "")
+            local playing = tonumber(server.playing) or 0
+            local capacity = tonumber(server.maxPlayers) or 0
+            if id ~= "" and id ~= here and playing < capacity then
+                table.insert(candidates, id)
+            end
+        end
+
+        report("info", ("saltando de servidor · %d candidatos"):format(#candidates))
+        return Remotes.hopServer(candidates)
+    end,
+
     ["scan.refresh"] = function()
         if not Scanner then
             error("este bridge no escanea (no está en el place del escáner)", 0)

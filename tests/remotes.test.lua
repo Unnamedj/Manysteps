@@ -71,16 +71,47 @@ local localPlayer = {
 }
 
 local teleports = {}
+local failHandlers = {}
+
 local teleportService = {
     Teleport = function(_, placeId, player)
         table.insert(teleports, { kind = "Teleport", placeId = placeId, player = player })
+        -- Roblox avisa del rechazo por el evento, no rompiendo la llamada.
+        if _G.__TELEPORT_REJECTION then
+            for _, handler in ipairs(failHandlers) do
+                handler(player, "Unauthorized", _G.__TELEPORT_REJECTION)
+            end
+        end
     end,
     TeleportToPlaceInstance = function(_, placeId, jobId, player)
         table.insert(teleports, {
             kind = "TeleportToPlaceInstance", placeId = placeId, jobId = jobId, player = player,
         })
+        if _G.__TELEPORT_REJECTION then
+            for _, handler in ipairs(failHandlers) do
+                handler(player, "Unauthorized", _G.__TELEPORT_REJECTION)
+            end
+        end
     end,
+    TeleportInitFailed = {
+        Connect = function(_, handler)
+            table.insert(failHandlers, handler)
+            return {
+                Disconnect = function()
+                    for index, existing in ipairs(failHandlers) do
+                        if existing == handler then
+                            table.remove(failHandlers, index)
+                            break
+                        end
+                    end
+                end,
+            }
+        end,
+    },
 }
+
+-- El módulo espera task.wait mientras aguarda el posible rechazo.
+task = task or { wait = function() end }
 
 game = {
     GetService = function(self, name)
@@ -258,6 +289,36 @@ check("un jobId vacío no cuenta como servidor",
     teleports[#teleports].kind == "Teleport", teleports[#teleports].kind)
 
 check("rechaza un place que no es número", not pcall(Remotes.moveSelf, "por-ahi"))
+
+-- Roblox bloquea el salto entre juegos de creadores distintos, y avisa
+-- por TeleportInitFailed: hay que contarlo, no dar el salto por bueno.
+_G.__TELEPORT_REJECTION =
+    "Cannot teleport from this universe to a universe owned by a different creator (Unauthorized)"
+
+local moveOk, moveErr = pcall(Remotes.moveSelf, "101017811878308")
+check("un teleport rechazado no se da por hecho", not moveOk)
+check("y se cuenta el motivo que dio Roblox",
+    tostring(moveErr):find("different creator") ~= nil, moveErr)
+
+_G.__TELEPORT_REJECTION = nil
+check("sin rechazo, el salto vale", (pcall(Remotes.moveSelf, "101017811878308")))
+
+----------------------------------------------------------------------
+print("saltar de servidor")
+
+game.JobId = "servidor-actual"
+game.PlaceId = 78906538690694
+
+Remotes.hopServer({ "servidor-actual", "otro-servidor", "uno-mas" })
+local hop = teleports[#teleports]
+check("salta al primero que no sea el de ahora",
+    hop.kind == "TeleportToPlaceInstance" and hop.jobId == "otro-servidor",
+    hop.jobId)
+
+check("dentro del mismo place", hop.placeId == 78906538690694, hop.placeId)
+
+check("sin candidatos, lo dice", not pcall(Remotes.hopServer, { "servidor-actual" }))
+check("y con la lista vacía también", not pcall(Remotes.hopServer, {}))
 
 ----------------------------------------------------------------------
 print("candidatos")

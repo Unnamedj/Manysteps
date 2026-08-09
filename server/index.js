@@ -42,6 +42,7 @@ const COMMANDS = {
   "time.resume": () => ({}),
   "players.refresh": () => ({}),
   "scan.refresh": () => ({}),
+  "bridge.hop": () => ({}),
 
   /* Mover al propio bridge de place. El jobId es opcional: sin él cae en
      cualquier servidor de ese place. */
@@ -234,6 +235,8 @@ app.post("/api/bridge/hello", requireBridgeAuth, (req, res) => {
   if (!id) return res.status(400).json({ error: "falta el identificador del bridge" });
 
   const bridge = store.touchBridge(id, req.body ?? {});
+  store.resetScan(id);
+
   res.json({
     ok: true,
     bridgeId: bridge.id,

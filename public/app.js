@@ -359,6 +359,21 @@ function renderBridgePlaces(places) {
 
     el.bridgePlaces.append(button);
   }
+
+  // Saltar de servidor dentro del mismo place sí lo permite Roblox
+  // siempre; cambiar de juego, no.
+  const hop = document.createElement("button");
+  hop.type = "button";
+  hop.textContent = "otro servidor";
+  hop.dataset.hop = "1";
+  hop.title = "Salta a otro servidor del mismo juego donde ya está";
+  hop.addEventListener("click", () => {
+    send("bridge.hop").then(
+      () => toast("Buscando otro servidor…", "ok"),
+      () => {},
+    );
+  });
+  el.bridgePlaces.append(hop);
 }
 
 /** Lista de bridges conectados y a cuál se le habla. */

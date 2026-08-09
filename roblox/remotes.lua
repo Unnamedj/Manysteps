@@ -333,13 +333,61 @@ function Remotes.moveSelf(placeId, jobId)
 
     local target = toId(placeId, "placeId")
 
-    if type(jobId) == "string" and jobId ~= "" then
-        TeleportService:TeleportToPlaceInstance(target, jobId, player)
-        return { placeId = target, jobId = jobId }
+    -- Roblox no siempre deja saltar: entre juegos de creadores distintos
+    -- lo bloquea salvo que el de origen permita teleports de terceros.
+    -- El fallo llega por este evento, no como error de la llamada, así
+    -- que sin escucharlo daríamos por bueno un salto que nunca ocurre.
+    local failure = nil
+    local connection = TeleportService.TeleportInitFailed:Connect(function(who, result, message)
+        if who == player or who == nil then
+            failure = tostring(message or result or "teleport rechazado")
+        end
+    end)
+
+    local ok, err = pcall(function()
+        if type(jobId) == "string" and jobId ~= "" then
+            TeleportService:TeleportToPlaceInstance(target, jobId, player)
+        else
+            TeleportService:Teleport(target, player)
+        end
+    end)
+
+    -- El rechazo tarda un momento en llegar.
+    task.wait(1.5)
+    connection:Disconnect()
+
+    if not ok then
+        error(tostring(err), 0)
+    end
+    if failure then
+        error(failure, 0)
     end
 
-    TeleportService:Teleport(target, player)
-    return { placeId = target }
+    return { placeId = target, jobId = jobId }
+end
+
+--- Salta a otro servidor del mismo place.
+---
+--- Esto sí funciona siempre: es el mismo universo, así que Roblox no lo
+--- bloquea. `servers` es la lista de Job IDs candidatos — el bridge la
+--- pide a la API pública, que desde aquí no se puede consultar.
+function Remotes.hopServer(servers)
+    local TeleportService = game:GetService("TeleportService")
+    local player = Players.LocalPlayer
+    if not player then
+        error("no hay LocalPlayer al que mover", 0)
+    end
+
+    local here = tostring(game.JobId)
+    for _, candidate in ipairs(servers or {}) do
+        local jobId = tostring(candidate)
+        if jobId ~= "" and jobId ~= here then
+            TeleportService:TeleportToPlaceInstance(game.PlaceId, jobId, player)
+            return { jobId = jobId }
+        end
+    end
+
+    error("no había otro servidor al que saltar", 0)
 end
 
 ----------------------------------------------------------------------

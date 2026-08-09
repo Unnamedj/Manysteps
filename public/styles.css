@@ -989,6 +989,18 @@ body {
   background: rgba(111, 179, 255, 0.1);
 }
 
+/* El salto de servidor es otra cosa que cambiar de juego. */
+.movebar__places button[data-hop="1"] {
+  color: var(--text-faint);
+  border-color: var(--line-strong);
+}
+
+.movebar__places button[data-hop="1"]:hover {
+  color: var(--text);
+  border-color: var(--text-faint);
+  background: rgba(255, 255, 255, 0.04);
+}
+
 .bridges__empty {
   padding: 22px 12px;
   text-align: center;

@@ -136,6 +136,12 @@ function blankBridge(id) {
   };
 }
 
+/** Tira el escaneo de un bridge: lo que vio ya no vale. */
+function clearScan(bridge) {
+  if (bridge.scan.items.length === 0 && !bridge.scan.supported) return;
+  bridge.scan = { items: [], updatedAt: 0, supported: false, source: null };
+}
+
 export function bridgeName(bridge) {
   if (!bridge) return "?";
   return bridge.username || (bridge.userId ? `#${bridge.userId}` : bridge.id.slice(0, 6));
@@ -160,6 +166,12 @@ export function touchBridge(id, info = {}) {
   bridge.online = true;
   bridge.lastSeen = Date.now();
 
+  // Si se ha movido de partida, lo que escaneó allí ya no describe donde
+  // está ahora: fuera, antes de que el panel lo siga enseñando.
+  const movedPlace = info.placeId && bridge.placeId && String(info.placeId) !== bridge.placeId;
+  const movedServer = info.jobId && bridge.jobId && String(info.jobId) !== bridge.jobId;
+  if (movedPlace || movedServer) clearScan(bridge);
+
   for (const field of ["executor", "placeId", "jobId", "userId", "username"]) {
     const value = info[field];
     if (value !== undefined && value !== null && value !== "") {
@@ -173,6 +185,17 @@ export function touchBridge(id, info = {}) {
   }
   emitSnapshot();
   return bridge;
+}
+
+/**
+ * Arranque limpio: al reejecutar el script el bridge empieza de cero, y
+ * lo que escaneó en la sesión anterior no tiene por qué seguir valiendo.
+ */
+export function resetScan(id) {
+  const bridge = getBridge(id);
+  if (!bridge) return;
+  clearScan(bridge);
+  emitSnapshot();
 }
 
 export function getBridge(id) {
@@ -195,6 +218,7 @@ export function sweepBridges() {
         bridgeName: bridgeName(bridge),
       });
       abandonPending(bridge, "el bridge se desconectó");
+      clearScan(bridge);
       changed = true;
     }
 
@@ -374,6 +398,8 @@ export function describe(command) {
       return "Refrescar lista de jugadores";
     case "bridge.teleport":
       return `Mover bridge al place ${p.placeId}`;
+    case "bridge.hop":
+      return "Saltar a otro servidor";
     case "scan.refresh":
       return "Escanear plots";
     case "teleport.send":
@@ -546,7 +572,13 @@ export function setGameState(bridgeId, raw) {
     updatedAt: Date.now(),
   };
 
-  if (raw.scanner === true) bridge.scan.supported = true;
+  // Un bridge que ya no escanea — se movió de place, o lo reejecutaste
+  // en otro sitio — no puede seguir enseñando lo que vio antes.
+  if (raw.scanner === true) {
+    bridge.scan.supported = true;
+  } else {
+    clearScan(bridge);
+  }
 
   const access = raw.access;
   if (access && ACCESS_STATES.has(access.status)) {

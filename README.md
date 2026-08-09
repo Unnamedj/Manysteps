@@ -143,6 +143,27 @@ del juego sino `TeleportService`, o sea el propio cliente cambiándose de
 sitio. Al hacerlo el bridge se va del servidor, así que lo verás caer y
 volver a conectar: es lo esperado.
 
+### Cuándo Roblox no deja saltar
+
+Entre **juegos de creadores distintos**, Roblox bloquea el teleport hecho
+desde el cliente salvo que el juego de origen tenga activado *Allow Third
+Party Teleports*. El error que devuelve es:
+
+```
+Cannot teleport from this universe to a universe owned by a
+different creator (Unauthorized)
+```
+
+Eso no se puede sortear desde el script — es de la plataforma, y depende
+de un ajuste del juego origen que no controlamos. Lo que sí hace el
+bridge es **contarlo**: escucha `TeleportInitFailed` y el panel enseña el
+motivo en rojo, en vez de dar por bueno un salto que nunca ocurrió.
+
+Lo que sí funciona siempre es **otro servidor**, el tercer botón: salta a
+otra partida del mismo juego donde el bridge ya está. Mismo universo, sin
+restricción. Pide la lista a la API pública de Roblox, descarta el
+servidor actual y los llenos, y salta al primero que quede.
+
 No confundir con los **destinos de teleport de jugadores**, que son los
 del panel del juego y siguen siendo:
 
