@@ -149,7 +149,7 @@
           <section class="panel">
             <header class="panel__head">
               <h2>Destino</h2>
-              <span class="panel__tag">SaveAdminSettings</span>
+              <span class="panel__tag">panel del juego</span>
             </header>
             <div class="panel__body stack">
               <form class="field" id="placeForm">
@@ -163,12 +163,18 @@
                   inputmode="numeric"
                   placeholder="96342491571673"
                 />
-                <span class="field__hint" id="placeHint">sin guardar todavía</span>
+                <div class="places-row">
+                  <span class="places" id="places"></span>
+                  <span class="field__hint" id="placeHint">sin guardar todavía</span>
+                </div>
               </form>
 
               <form class="field" id="jobForm">
                 <div class="field__top">
                   <span class="field__label">Job ID</span>
+                  <button class="linkbtn linkbtn--quiet" type="button" id="useCurrentJob">
+                    este servidor
+                  </button>
                   <button class="linkbtn" type="submit">guardar →</button>
                 </div>
                 <input
@@ -184,17 +190,17 @@
 
           <section class="panel panel--compact">
             <header class="panel__head">
-              <h2>Sesión del bridge</h2>
+              <h2>Bridges</h2>
+              <span class="panel__tag" id="bridgeTag">0 en línea</span>
             </header>
-            <div class="panel__body">
-              <dl class="meta">
-                <div><dt>Cuenta</dt><dd id="metaUser">—</dd></div>
-                <div><dt>Executor</dt><dd id="metaExecutor">—</dd></div>
-                <div><dt>Place actual</dt><dd id="metaPlace" class="mono">—</dd></div>
-                <div><dt>Job actual</dt><dd id="metaJob" class="mono trunc">—</dd></div>
-                <div><dt>Último ping</dt><dd id="metaPing">—</dd></div>
-              </dl>
-            </div>
+            <div class="bridges" id="bridges"></div>
+            <footer class="bridges__foot">
+              <span id="targetNote">las órdenes van a todos</span>
+              <div class="movebar">
+                <span class="movebar__label">Mover a</span>
+                <span class="movebar__places" id="bridgePlaces"></span>
+              </div>
+            </footer>
           </section>
         </div>
 
@@ -202,8 +208,14 @@
         <div class="col">
           <section class="panel panel--grow">
             <header class="panel__head">
-              <h2>Jugadores</h2>
-              <span class="panel__tag" id="rosterCount">0</span>
+              <div class="tabs" role="tablist">
+                <button class="tab" id="tabPlayers" data-active="1" type="button" role="tab">
+                  Jugadores <b id="rosterCount">0</b>
+                </button>
+                <button class="tab" id="tabScan" data-active="0" type="button" role="tab">
+                  Escaneo <b id="scanCount">0</b>
+                </button>
+              </div>
               <button class="iconbtn" id="refreshBtn" type="button" title="Refrescar lista">
                 <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
                   <path
@@ -236,7 +248,25 @@
 
             <div class="roster" id="roster" role="list"></div>
 
-            <footer class="roster__foot">
+            <!-- vista de escaneo: solo datos, el juego no dibuja nada -->
+            <div class="scan" id="scan" hidden>
+              <div class="scan__tools">
+                <div class="search">
+                  <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
+                    <circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="2" />
+                    <path d="m16 16 4.5 4.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                  </svg>
+                  <input id="scanSearch" type="search" placeholder="Buscar objeto, dueño o mutación…" autocomplete="off" />
+                </div>
+                <button class="btn btn--ghost btn--sm" id="scanRefreshBtn" type="button">
+                  Escanear
+                </button>
+              </div>
+              <div class="scan__list" id="scanList"></div>
+              <footer class="scan__foot" id="scanFoot">sin datos todavía</footer>
+            </div>
+
+            <footer class="roster__foot" id="rosterFoot">
               <div class="roster__summary">
                 <span class="counter" id="selCount">0</span>
                 <span class="roster__dest" id="destSummary">selecciona un destino</span>
@@ -273,14 +303,29 @@
 
     <!-- ---------------------------------------------------------- -->
     <dialog class="modal" id="loaderModal">
-      <h3>Cargar el bridge en Roblox</h3>
+      <h3>Cargar en Roblox</h3>
+
+      <p class="modal__label">1 · Bridge — ejecuta los remotes</p>
       <p class="modal__text">
-        Pega esto en tu executor con el juego abierto. El script se conecta a esta
-        consola y queda esperando órdenes.
+        Va en la cuenta que está dentro del juego, con el panel de admin abierto.
+        Es quien toca los remotes.
       </p>
       <pre class="code" id="loaderCode">…</pre>
+      <button class="btn btn--ghost btn--sm" id="copyLoader" type="button">
+        Copiar loader del bridge
+      </button>
+
+      <p class="modal__label">2 · Mando — la consola dentro del juego</p>
+      <p class="modal__text">
+        Opcional. Abre esta misma consola como ventana en Roblox, para mandar sin
+        salir del juego. Puede ir en otra cuenta o en otro sitio.
+      </p>
+      <pre class="code" id="controlCode">…</pre>
+      <button class="btn btn--ghost btn--sm" id="copyControl" type="button">
+        Copiar loader del mando
+      </button>
+
       <div class="modal__actions">
-        <button class="btn btn--ghost" id="copyLoader" type="button">Copiar</button>
         <button class="btn btn--primary" id="closeLoader" type="button">Listo</button>
       </div>
     </dialog>

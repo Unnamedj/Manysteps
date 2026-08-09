@@ -4,29 +4,176 @@ Panel web (desplegable en Railway) que controla los remotes de
 `ReplicatedStorage.AdminEvents` desde un script ejecutado dentro de Roblox.
 
 ```
-   navegador                Railway                     Roblox
-  ┌──────────┐   HTTPS   ┌────────────┐  long-poll  ┌──────────────┐
-  │  panel   │ ────────► │  servidor  │ ◄────────── │ controller.lua│
-  │  (web)   │ ◄──────── │  (cola +   │ ──────────► │      ↓        │
-  └──────────┘   websock │   estado)  │   comandos  │  remotes.lua  │
-                         └────────────┘             └──────────────┘
+   navegador                Railway                    Roblox
+  ┌──────────┐   HTTPS   ┌────────────┐            ┌───────────────┐
+  │  panel   │ ────────► │  servidor  │ ◄────────► │ bridge · opA  │
+  │  (web)   │ ◄──────── │            │            ├───────────────┤
+  └──────────┘   websock │  una cola  │ ◄────────► │ bridge · opB  │
+  ┌──────────┐           │ por bridge │            ├───────────────┤
+  │  mando   │ ────────► │            │ ◄────────► │ bridge · opC  │
+  │ (roblox) │           └────────────┘  long-poll └───────────────┘
+  └──────────┘                                             ↓
+                                            remotes.lua → AdminEvents
 ```
 
 El panel nunca habla con Roblox directamente: encola comandos y el script
 del juego los recoge, ejecuta el remote y devuelve el resultado.
 
+## Varios bridges a la vez
+
+Puedes tener tantas cuentas ejecutando el bridge como quieras. Cada una
+aparece en el panel con su propio estado — tiempo de acceso, Job ID de su
+cuadro, cuántos jugadores tiene delante — y **cada una lleva su propia
+cola**: una orden nunca acaba ejecutándose en la partida equivocada.
+
+- Las órdenes van **a todos** por defecto (pausar, fijar destino). Al
+  pulsar un bridge en la lista, van solo a ese y la lista de jugadores se
+  filtra a los que él ve.
+- Los teleports se mandan **por el bridge que ve a cada jugador**, aunque
+  selecciones gente de varias partidas a la vez.
+- Las cuentas que hacen de bridge **no salen en la lista de jugadores**:
+  no tiene sentido ofrecerte teletransportar a tus propios operadores.
+- Si el mismo jugador lo ven dos bridges, aparece una sola vez.
+
+La identidad de cada bridge es el `UserId` de la cuenta que lo ejecuta,
+así que reejecutar el script no deja un fantasma en la lista. Un bridge
+caído se queda visible en gris diez minutos y luego desaparece.
+
+Hay dos formas de mandar: **el panel web** y **el mando**, una ventana
+dentro de Roblox que hace lo mismo sin salir del juego. Los dos hablan
+con el mismo servidor, así que se ven el uno al otro en tiempo real.
+
 ## Qué hace
 
-| Acción | Remote |
+| Acción | Cómo |
 | --- | --- |
 | Pausar / reanudar el tiempo | `ToggleAdminTimePause:InvokeServer("pause"\|"resume")` |
-| Guardar Job ID | `SaveAdminSettings:FireServer("savedJobId", jobId)` |
+| Poner el Job ID | escribe en el cuadro `JobIDBox` del panel **y** `SaveAdminSettings:FireServer("savedJobId", jobId)` |
 | Guardar Place ID | `SaveAdminSettings:FireServer("savedPlaceId", placeId)` |
 | Enviar teleport | `TeleportSelectedPlayer:FireServer(userId, placeId, jobId)` |
 | Listar jugadores | `GetTeleportCandidates:InvokeServer()` |
+| Leer los ajustes | `GetAdminSettings:InvokeServer()` |
+| Estado del acceso | `GetAccessStatus:InvokeServer()` |
+| Escanear los plots | recorre `Workspace` — sin remotes |
+| Resultado del teleport | `TeleportSelectedPlayerResult.OnClientEvent` |
+
+El panel y el mando muestran el **tiempo de acceso que queda**, tal y
+como lo cuenta el servidor del juego (`GetAccessStatus`), y no lo que
+dedujimos del último botón pulsado. La cuenta atrás corre en el cliente
+entre lecturas.
+
+Los **destinos** del propio panel del juego (`SAB New Player` y
+`SAB Normal`) están como atajos junto al Place ID, para no tener que
+recordar los números.
 
 Los teleports se pueden mandar a varios jugadores de una tanda: se
 seleccionan en la lista y se encola un comando por cada uno.
+
+### Por qué el Job ID son dos pasos
+
+En el juego, el Job ID que se usa de verdad es **el texto del cuadro
+`JobIDBox`** del panel: su botón de teleport manda
+`TeleportSelectedPlayer:FireServer(userId, placeId, JobIDBox.Text)`.
+
+`savedJobId` es solo persistencia. El juego lo escribe en el cuadro al
+abrir el panel, y únicamente si el ajuste `rememberJobId` está activado:
+
+```lua
+if settings.rememberJobId then JobIDBox.Text = settings.savedJobId end
+```
+
+Por eso mandar solo `SaveAdminSettings` no cambia nada a la vista. El
+bridge hace las dos cosas: escribe en el cuadro (efecto inmediato) y
+guarda el ajuste (para cuando se reabra el panel). Si quieres que
+persista entre sesiones, activa **Remember Job ID** dentro del juego.
+
+El panel web muestra en todo momento lo que hay en el cuadro, leído del
+juego — no lo último que se mandó.
+
+## Escáner de plots
+
+Un bridge que esté en el place **78906538690694** lee qué hay en cada
+plot y lo manda al panel. Se ve en la pestaña **Escaneo**, junto a la de
+jugadores.
+
+Los datos salen del paquete **Synchronizer** del propio juego: dentro de
+los upvalues de su `Get` está la tabla de canales, y cada canal lleva su
+`CacheTable` con el dueño del plot y su `AnimalList`. De ahí sale el
+slot, el animal, la mutación, los traits y la **generación**, calculada
+con `Datas.Animals`, `Datas.Mutations` y `Datas.Traits` igual que lo hace
+el juego:
+
+```
+generación = Generation del animal × (1 + Modifier de la mutación
+                                        + MultiplierModifier de cada trait)
+```
+
+Si ese paquete no aparece — otro juego, otra versión — se cae a un
+barrido del `Workspace`, que da menos (sin traits ni generación) pero da
+algo. El pie de la lista avisa cuando va por ese respaldo.
+
+Solo manda datos. No dibuja nada dentro del juego: ni ESP, ni carteles,
+ni bucles de render. En cualquier otro place el escáner ni se carga.
+
+La lista va **agrupada por dueño**: cada persona con sus cosas debajo, el
+que **más genera** primero y los plots libres al final. Cada cabecera
+suma lo que produce esa persona, y el pie el total de todos. Si ese dueño está
+además en la lista de jugadores, sale marcado como **en la lista** y al
+pulsarlo se selecciona para teleport — de ver qué tiene a mandarlo, en un
+clic.
+
+Un bridge puede escanear aunque ese juego no tenga `AdminEvents` — sirve
+solo para mirar. Y al revés: el que ejecuta remotes no escanea si no está
+en ese place. En el panel se distingue cuál hace qué.
+
+## Mover a los propios bridges
+
+Aparte de teletransportar jugadores, se puede mover a **las cuentas que
+ejecutan el bridge**. En la sección Bridges hay una fila **Mover a** con
+los dos places donde suelen hacer falta:
+
+| Nombre | Place ID | Para qué |
+| --- | --- | --- |
+| Brainrots | `78906538690694` | el place del escáner |
+| Remotes | `101017811878308` | donde funcionan los remotes |
+
+Va al destino que tengas elegido arriba: con *Todos* se mueven todos los
+bridges de golpe, y con uno elegido, solo ese. Por dentro no es un remote
+del juego sino `TeleportService`, o sea el propio cliente cambiándose de
+sitio. Al hacerlo el bridge se va del servidor, así que lo verás caer y
+volver a conectar: es lo esperado.
+
+### Cuándo Roblox no deja saltar
+
+Entre **juegos de creadores distintos**, Roblox bloquea el teleport hecho
+desde el cliente salvo que el juego de origen tenga activado *Allow Third
+Party Teleports*. El error que devuelve es:
+
+```
+Cannot teleport from this universe to a universe owned by a
+different creator (Unauthorized)
+```
+
+Eso no se puede sortear desde el script — es de la plataforma, y depende
+de un ajuste del juego origen que no controlamos. Lo que sí hace el
+bridge es **contarlo**: escucha `TeleportInitFailed` y el panel enseña el
+motivo en rojo, en vez de dar por bueno un salto que nunca ocurrió.
+
+Lo que sí funciona siempre es **otro servidor**, el tercer botón: salta a
+otra partida del mismo juego donde el bridge ya está. Mismo universo, sin
+restricción. Pide la lista a la API pública de Roblox, descarta el
+servidor actual y los llenos, y salta al primero que quede.
+
+No confundir con los **destinos de teleport de jugadores**, que son los
+del panel del juego y siguen siendo:
+
+| Nombre | Place ID |
+| --- | --- |
+| SAB New Player | `96342491571673` |
+| SAB Normal | `109983668079237` |
+
+Unos están en `PLACES` y los otros en `BRIDGE_PLACES`, los dos en
+`server/store.js`.
 
 ## Estructura
 
@@ -38,9 +185,14 @@ server/          backend Node (Express + WebSocket)
 public/          panel web (sin build, sin dependencias externas)
 roblox/
   remotes.lua    capa de remotes — solo llama a AdminEvents
-  controller.lua puente: pregunta al panel qué hacer y lo ejecuta
-tests/           pruebas de remotes.lua sobre un Roblox mockeado
+  controller.lua bridge: pregunta al panel qué hacer y lo ejecuta
+  control.lua    mando: la consola dibujada dentro de Roblox
+  scanner.lua    lee los plots del place del escáner y los reporta
+tests/           pruebas de los scripts sobre un Roblox mockeado
 ```
+
+Los tres scripts de Roblox se sirven desde el propio servidor, así que se
+actualizan solos al hacer redeploy: basta con volver a pegar el loader.
 
 ## Desplegar en Railway
 
@@ -71,6 +223,67 @@ loadstring(game:HttpGet("https://TU-APP.up.railway.app/script/loader.lua?key=TU_
 ```
 
 Para detener el bridge sin cerrar Roblox: `getgenv().MANYSTEPS_STOP()`.
+
+## El mando (opcional)
+
+Si prefieres mandar sin salir del juego, el botón **Loader** trae una
+segunda línea, la del mando:
+
+```lua
+loadstring(game:HttpGet("https://TU-APP.up.railway.app/script/loader.lua?key=TU_BRIDGE_KEY&mode=control"))()
+```
+
+Abre una ventana dentro de Roblox con lo mismo que el panel web: pausar y
+reanudar, Place ID y Job ID, la lista de jugadores con selección múltiple
+y el envío por tanda. No toca ningún remote — manda las órdenes al panel,
+igual que el navegador, y el bridge las ejecuta.
+
+Por eso puede correr donde quieras: en otra cuenta, en otro servidor o en
+otro juego. Solo necesita alcanzar el panel.
+
+### Traer gente a tu partida
+
+El botón **MI JOB ID**, junto al campo, coge el `game.JobId` del servidor
+donde está corriendo *el mando* y lo manda como destino de un tirón.
+
+Sirve para lo de siempre: tú estás en una partida, el bridge está en
+otra, y quieres que la gente venga contigo. Le das y el bridge empieza a
+teletransportar a tu servidor.
+
+Un Job ID solo vale dentro de su propio juego, así que si el Place ID
+configurado es otro, el mando te avisa en la barra de estado en vez de
+dejarte mandar gente a un sitio que no existe.
+
+### Elegir a qué bridge le hablas
+
+El mando lleva su propia columna de bridges, a la derecha, con la misma
+idea que la web: **Todos** arriba y debajo cada operador con sus
+jugadores y su reloj.
+
+Al pulsar uno, las órdenes van solo a él y la lista de jugadores se queda
+con los que ese ve. Si se cae, vuelve solo a *todos*, para que no te
+quedes mandando a un sitio que ya no existe.
+
+Los teleports siguen yendo por el bridge que ve a cada jugador, elijas lo
+que elijas: puedes seleccionar gente de varias partidas y sale bien.
+
+- `RightControl` muestra u oculta la ventana.
+- La barra de título la arrastra; el `_` la pliega.
+- `getgenv().MANYSTEPS_CONTROL_STOP()` la cierra del todo.
+
+Si en tu pantalla se ve grande, cárgalo a mano con una escala:
+
+```lua
+getgenv().MANYSTEPS_CONFIG = {
+    url = "https://TU-APP.up.railway.app",
+    key = "TU_BRIDGE_KEY",
+    scale = 0.8,
+}
+loadstring(game:HttpGet("https://TU-APP.up.railway.app/script/control.lua"))()
+```
+
+Puedes ejecutar el bridge y el mando en la misma sesión: son
+independientes y no se pisan.
 
 ## Usar los remotes sin panel
 
@@ -103,11 +316,17 @@ PANEL_PASSWORD=test BRIDGE_KEY=test npm run dev
 npm test
 ```
 
-Ejecuta `roblox/remotes.lua` dentro de una VM de Lua con `ReplicatedStorage`
-mockeado y comprueba que cada función dispara el remote correcto con los
-argumentos y tipos exactos (por ejemplo: que el Place ID viaja como texto
-`"96342491571673"` en `SaveAdminSettings` pero como número en
-`TeleportSelectedPlayer`). No hace falta Studio ni un executor.
+Dos suites, las dos sobre una VM de Lua con Roblox mockeado. No hace
+falta Studio ni un executor.
+
+- **remotes.lua** — comprueba que cada función dispara el remote correcto
+  con los argumentos y tipos exactos. Por ejemplo: que el Place ID viaja
+  como texto `"96342491571673"` en `SaveAdminSettings` pero como número
+  en `TeleportSelectedPlayer`.
+- **control.lua** — carga el mando entero con instancias, eventos y HTTP
+  simulados, dispara los clics y mira qué manda al panel: que Pausar
+  encola `time.pause`, que el envío por tanda lleva los jugadores
+  marcados, que un refresco no pisa lo que estás escribiendo.
 
 ## Notas
 

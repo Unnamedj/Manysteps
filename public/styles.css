@@ -35,6 +35,12 @@
   box-sizing: border-box;
 }
 
+/* Los display de autor ganan al [hidden] del navegador, así que sin
+   esto ocultar un panel con display:grid o :flex no hace nada. */
+[hidden] {
+  display: none !important;
+}
+
 html,
 body {
   height: 100%;
@@ -666,6 +672,7 @@ body {
   letter-spacing: 0.2em;
   text-transform: uppercase;
   color: var(--text-faint);
+  white-space: nowrap;
 }
 
 .field__top {
@@ -687,15 +694,75 @@ body {
   text-transform: uppercase;
   color: var(--acid-dim);
   transition: color 0.14s ease;
+  white-space: nowrap;
 }
 
 .linkbtn:hover {
   color: var(--acid);
 }
 
+/* Con dos botones en la fila, solo el primero empuja hacia la derecha. */
+.field__top .linkbtn + .linkbtn {
+  margin-left: 14px;
+}
+
+.linkbtn--quiet {
+  color: var(--text-faint);
+}
+
 .linkbtn:focus-visible {
   outline: 1px solid var(--acid);
   outline-offset: 3px;
+}
+
+/* Atajos a los destinos. Van bajo el campo porque ya son cuatro y en la
+   fila de la etiqueta no caben sin comerse el botón de guardar. */
+.places-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.places {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.places button {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 99px;
+  padding: 1px 8px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    color 0.14s ease,
+    border-color 0.14s ease;
+}
+
+.places button:hover {
+  color: var(--text);
+  border-color: var(--line-strong);
+}
+
+.places button[data-active="1"] {
+  color: var(--acid);
+  border-color: var(--acid-dim);
+}
+
+/* La fila del Place ID lleva etiqueta, atajos y botón: sin esto el
+   contenedor los aprieta hasta partirles el texto en dos líneas. */
+.field__top {
+  flex-wrap: nowrap;
+  min-width: 0;
 }
 
 .field__row {
@@ -778,6 +845,399 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* ================================================================
+   bridges
+   ================================================================ */
+
+.bridges {
+  display: grid;
+  gap: 3px;
+  padding: 8px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.bridge {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 9px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease;
+}
+
+.bridge:hover {
+  background: var(--surface-2);
+  border-color: var(--line);
+}
+
+.bridge[data-selected="1"] {
+  background: rgba(198, 242, 78, 0.07);
+  border-color: rgba(198, 242, 78, 0.35);
+}
+
+.bridge[data-online="0"] {
+  opacity: 0.45;
+}
+
+.bridge__who {
+  display: grid;
+  line-height: 1.25;
+  min-width: 0;
+  flex: 1;
+}
+
+.bridge__who b {
+  font-size: 12.5px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bridge__who span {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bridge__clock {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.bridge__clock[data-state="paused"] {
+  color: var(--amber);
+}
+.bridge__clock[data-state="active"] {
+  color: var(--acid-dim);
+}
+.bridge__clock[data-state="locked"],
+.bridge__clock[data-state="blacklisted"] {
+  color: var(--red);
+}
+
+.bridges__foot {
+  padding: 8px 12px;
+  border-top: 1px solid var(--line);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--text-faint);
+  display: grid;
+  gap: 8px;
+}
+
+/* Mover a los propios operadores de place: nada que ver con el destino
+   de los teleports de jugadores. */
+.movebar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.movebar__label {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.movebar__places {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.movebar__places button {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--blue);
+  background: transparent;
+  border: 1px solid rgba(111, 179, 255, 0.28);
+  border-radius: 99px;
+  padding: 2px 9px;
+  cursor: pointer;
+  transition:
+    color 0.14s ease,
+    border-color 0.14s ease,
+    background 0.14s ease;
+}
+
+.movebar__places button:hover {
+  color: var(--text);
+  border-color: var(--blue);
+  background: rgba(111, 179, 255, 0.1);
+}
+
+/* El salto de servidor es otra cosa que cambiar de juego. */
+.movebar__places button[data-hop="1"] {
+  color: var(--text-faint);
+  border-color: var(--line-strong);
+}
+
+.movebar__places button[data-hop="1"]:hover {
+  color: var(--text);
+  border-color: var(--text-faint);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.bridges__empty {
+  padding: 22px 12px;
+  text-align: center;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+/* Marca de qué bridge ve a cada jugador. */
+.tagline {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  color: var(--text-faint);
+  border: 1px solid var(--line);
+  border-radius: 99px;
+  padding: 0 6px;
+  margin-left: 6px;
+  vertical-align: 1px;
+}
+
+/* ================================================================
+   pestañas
+   ================================================================ */
+
+.tabs {
+  display: flex;
+  gap: 4px;
+}
+
+.tab {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  background: transparent;
+  border: 0;
+  padding: 2px 0;
+  margin-right: 10px;
+  cursor: pointer;
+  border-bottom: 1px solid transparent;
+  transition: color 0.14s ease;
+}
+
+.tab b {
+  font-weight: 400;
+  font-size: 10px;
+  opacity: 0.7;
+  margin-left: 3px;
+}
+
+.tab:hover {
+  color: var(--text-dim);
+}
+
+.tab[data-active="1"] {
+  color: var(--text);
+  border-bottom-color: var(--acid);
+}
+
+/* ================================================================
+   escaneo de plots
+   ================================================================ */
+
+.scan {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.scan[hidden] {
+  display: none;
+}
+
+.scan__tools {
+  display: flex;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.scan__list {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+  padding: 6px;
+  display: grid;
+  gap: 2px;
+  align-content: start;
+}
+
+/* Cabecera de cada dueño: lo escaneado se lee por persona. */
+.scan__owner-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  margin: 10px 0 2px;
+  padding: 4px 10px;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  font: inherit;
+  color: inherit;
+}
+
+.scan__owner-head:first-child {
+  margin-top: 0;
+}
+
+.scan__owner-head b {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  letter-spacing: 0.04em;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.scan__owner-head span {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-faint);
+}
+
+.scan__owner-head[data-linked="1"] {
+  cursor: pointer;
+}
+
+.scan__owner-head[data-linked="1"]:hover b {
+  color: var(--acid);
+}
+
+.scan__linked {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--acid);
+  border: 1px solid var(--acid-dim);
+  border-radius: 99px;
+  padding: 0 6px;
+  font-style: normal;
+}
+
+.scan__row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 4px 10px 4px 20px;
+  border-radius: var(--radius);
+  font-size: 12.5px;
+}
+
+.scan__row:hover {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.scan__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scan__mut {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: #ff8ad8;
+  border: 1px solid rgba(255, 138, 216, 0.35);
+  border-radius: 99px;
+  padding: 0 6px;
+  flex-shrink: 0;
+}
+
+.scan__trait {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  color: var(--blue);
+  border: 1px solid rgba(111, 179, 255, 0.28);
+  border-radius: 99px;
+  padding: 0 6px;
+  flex-shrink: 0;
+  font-style: normal;
+}
+
+.scan__gen {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--acid-dim);
+  flex-shrink: 0;
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+
+.scan__gen + .scan__plot {
+  margin-left: 10px;
+}
+
+.scan__owner {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  flex-shrink: 0;
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scan__plot {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-faint);
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.scan__foot {
+  padding: 10px 14px;
+  border-top: 1px solid var(--line);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--text-faint);
+}
+
+.scan__empty {
+  padding: 42px 20px;
+  text-align: center;
+  color: var(--text-faint);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  line-height: 1.9;
 }
 
 /* ================================================================
@@ -1084,10 +1544,27 @@ body {
   text-transform: uppercase;
 }
 
+.modal__label {
+  margin: 20px 0 6px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--acid-dim);
+}
+
+.modal__label:first-of-type {
+  margin-top: 4px;
+}
+
 .modal__text {
-  margin: 0 0 14px;
+  margin: 0 0 12px;
   color: var(--text-dim);
   font-size: 13px;
+}
+
+.modal .code + .btn {
+  margin-top: -6px;
 }
 
 .code {

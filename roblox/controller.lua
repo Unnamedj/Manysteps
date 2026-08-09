@@ -28,6 +28,8 @@ local BRIDGE_KEY = tostring(config.key or "")
 local POLL_WAIT = tonumber(config.pollWait) or 15 -- segundos que el server retiene el poll
 local PLAYER_SYNC_SECONDS = tonumber(config.playerSync) or 20
 local REMOTES_URL = config.remotesUrl or "@@REMOTES_URL@@"
+local SCANNER_URL = config.scannerUrl or "@@SCANNER_URL@@"
+local SCAN_SECONDS = tonumber(config.scanEvery) or 20
 
 ----------------------------------------------------------------------
 -- una sola instancia
@@ -78,6 +80,17 @@ local function statusOf(response)
 end
 
 --- Petición JSON. Devuelve ok, tabla|mensajeDeError.
+-- Con varios bridges conectados a la vez, el panel necesita saber cuál
+-- habla en cada petición: la cuenta que ejecuta el script es la
+-- identidad, así que reejecutarlo no deja un fantasma en la lista.
+local BRIDGE_ID = (function()
+    local player = Players.LocalPlayer
+    if player and player.UserId then
+        return string.format("%.0f", player.UserId)
+    end
+    return "anon-" .. tostring(math.random(100000, 999999))
+end)()
+
 local function httpJson(method, pathname, body, timeoutHint)
     local options = {
         Url = BASE_URL .. pathname,
@@ -86,6 +99,7 @@ local function httpJson(method, pathname, body, timeoutHint)
             ["Content-Type"] = "application/json",
             ["Accept"] = "application/json",
             ["x-bridge-key"] = BRIDGE_KEY,
+            ["x-bridge-id"] = BRIDGE_ID,
         },
         Timeout = timeoutHint or 30,
     }
@@ -152,17 +166,135 @@ if getgenv then
 end
 
 ----------------------------------------------------------------------
+-- escáner de plots (opcional)
+----------------------------------------------------------------------
+
+-- Solo sirve en un place concreto; en el resto ni se carga.
+local Scanner = nil
+do
+    local fetched, source = pcall(game.HttpGet, game, SCANNER_URL)
+    if fetched then
+        local chunk = loadstring(source, "manysteps-scanner")
+        if chunk then
+            local built, module = pcall(chunk)
+            if built and type(module) == "table" and type(module.scan) == "function" then
+                Scanner = module
+            end
+        end
+    end
+
+    if Scanner and not Scanner.isSupportedPlace() then
+        Scanner = nil
+    end
+end
+
+local hasRemotes = Remotes.hasAdminEvents()
+
+if Scanner then
+    print_("escáner activo en este place")
+end
+if not hasRemotes then
+    print_("sin AdminEvents en este place: este bridge no ejecuta remotes")
+end
+
+----------------------------------------------------------------------
+-- ritmo de los remotes
+----------------------------------------------------------------------
+
+-- Cuando el panel manda varias cosas de golpe, los remotes salen uno
+-- detrás de otro con milisegundos de diferencia. Muchos juegos ponen
+-- cooldown a los remotes de admin y descartan el segundo sin avisar,
+-- que es justo lo que parecía pasar al guardar Place ID y Job ID
+-- seguidos. Aquí se les da aire.
+local REMOTE_GAP = tonumber(config.remoteGap) or 0.7
+local lastCallAt = {}
+
+local function pace(remoteName)
+    local previous = lastCallAt[remoteName]
+    if previous then
+        local elapsed = os.clock() - previous
+        if elapsed < REMOTE_GAP then
+            task.wait(REMOTE_GAP - elapsed)
+        end
+    end
+    lastCallAt[remoteName] = os.clock()
+end
+
+----------------------------------------------------------------------
 -- jugadores
 ----------------------------------------------------------------------
 
+-- Lo que el juego tiene ahora mismo, para que el panel muestre la
+-- realidad en vez de lo último que creímos haber mandado.
+local function readGameState()
+    local state = {}
+    state.scanner = Scanner ~= nil
+    state.hasRemotes = hasRemotes
+
+    if not hasRemotes then
+        return state
+    end
+
+    local boxOk, boxValue = pcall(Remotes.getPanelJobId)
+    state.panelJobId = boxOk and boxValue or nil
+
+    pace("GetAdminSettings")
+    local settingsOk, settings = pcall(Remotes.getAdminSettings)
+    if settingsOk and type(settings) == "table" then
+        state.savedJobId = settings.savedJobId
+        state.savedPlaceId = settings.savedPlaceId
+        state.rememberJobId = settings.rememberJobId
+        state.rememberPlaceId = settings.rememberPlaceId
+    end
+
+    pace("GetAccessStatus")
+    local accessOk, access = pcall(Remotes.getAccessStatus)
+    if accessOk and type(access) == "table" then
+        state.access = access
+    end
+
+    return state
+end
+
+-- Tras cambiar un ajuste hay que contarlo ya: si esperásemos al refresco
+-- periódico, el panel seguiría enseñando el valor viejo casi medio
+-- minuto y pisaría lo que acabas de escribir.
+local function publishGameState()
+    httpJson("POST", "/api/bridge/players", { game = readGameState() })
+end
+
 local function pushPlayers()
+    -- Un bridge que solo escanea no tiene remotes que llamar.
+    if not hasRemotes then
+        httpJson("POST", "/api/bridge/players", { players = {}, game = readGameState() })
+        return true, {}
+    end
+
+    pace("GetTeleportCandidates")
     local ok, list = pcall(Remotes.getCandidates)
     if not ok then
         report("error", "GetTeleportCandidates falló: " .. tostring(list))
         return false, tostring(list)
     end
-    httpJson("POST", "/api/bridge/players", { players = list })
+    httpJson("POST", "/api/bridge/players", { players = list, game = readGameState() })
     return true, list
+end
+
+--- Manda lo que hay en los plots. Solo datos: el panel los enseña, en el
+--- juego no se dibuja nada.
+local function pushScan()
+    if not Scanner then
+        return false
+    end
+
+    local ok, items, source = pcall(Scanner.scan)
+    if not ok then
+        report("error", "escaneo falló: " .. tostring(items))
+        return false
+    end
+
+    httpJson("POST", "/api/bridge/scan", { items = items, source = source })
+    return true, items
 end
 
 ----------------------------------------------------------------------
@@ -171,29 +303,110 @@ end
 
 local handlers = {
     ["time.pause"] = function()
+        pace("ToggleAdminTimePause")
         return { state = Remotes.pauseTime() }
     end,
 
     ["time.resume"] = function()
+        pace("ToggleAdminTimePause")
         return { state = Remotes.resumeTime() }
     end,
 
+    -- Dos pasos, y el orden importa: primero el cuadro del panel, que es
+    -- lo que se ve y lo que lee el botón Teleport del juego, y después
+    -- el ajuste guardado, que solo se relee al reabrir el panel.
     ["settings.jobId"] = function(payload)
-        Remotes.saveJobId(payload.jobId)
-        return { jobId = payload.jobId }
+        local jobId = tostring(payload.jobId)
+
+        local wroteBox, boxError = pcall(Remotes.setPanelJobId, jobId)
+        if wroteBox then
+            report("ok", ("Job ID del panel → %s"):format(jobId))
+        else
+            report("warn", "No se pudo escribir en el panel: " .. tostring(boxError))
+        end
+
+        pace("SaveAdminSettings")
+        Remotes.saveJobId(jobId)
+
+        if not wroteBox then
+            -- Sin el cuadro, lo guardado no llega a aplicarse solo.
+            error(tostring(boxError), 0)
+        end
+
+        publishGameState()
+        return { jobId = jobId, panel = Remotes.getPanelJobId() }
     end,
 
     ["settings.placeId"] = function(payload)
-        Remotes.savePlaceId(payload.placeId)
-        return { placeId = payload.placeId }
+        local placeId = tostring(payload.placeId)
+        pace("SaveAdminSettings")
+        Remotes.savePlaceId(placeId)
+        publishGameState()
+        return { placeId = placeId }
     end,
 
     ["teleport.send"] = function(payload)
+        pace("TeleportSelectedPlayer")
         Remotes.teleport(payload.userId, payload.placeId, payload.jobId)
         return { userId = payload.userId }
     end,
 
+    -- Mover el propio bridge. Al hacerlo se va del servidor actual, así
+    -- que el panel lo verá caer y volver: es lo esperado.
+    ["bridge.teleport"] = function(payload)
+        local placeId = tostring(payload.placeId)
+        report("info", "moviendo este bridge al place " .. placeId)
+        return Remotes.moveSelf(placeId, payload.jobId)
+    end,
+
+    -- Saltar a otro servidor del mismo place. La lista de servidores la
+    -- pedimos aquí porque desde el juego no se puede consultar esa API.
+    ["bridge.hop"] = function()
+        local url = ("https://games.roblox.com/v1/games/%s/servers/Public?limit=100")
+            :format(string.format("%.0f", game.PlaceId))
+
+        local ok, response = pcall(httpRequest, {
+            Url = url,
+            Method = "GET",
+            Headers = { ["Accept"] = "application/json" },
+        })
+        if not ok then
+            error("no se pudo pedir la lista de servidores: " .. tostring(response), 0)
+        end
+
+        local decoded, parsed = pcall(HttpService.JSONDecode, HttpService, response.Body or "")
+        if not decoded or type(parsed) ~= "table" or type(parsed.data) ~= "table" then
+            error("la lista de servidores no vino en JSON", 0)
+        end
+
+        local here = tostring(game.JobId)
+        local candidates = {}
+        for _, server in ipairs(parsed.data) do
+            local id = tostring(server.id or "")
+            local playing = tonumber(server.playing) or 0
+            local capacity = tonumber(server.maxPlayers) or 0
+            if id ~= "" and id ~= here and playing < capacity then
+                table.insert(candidates, id)
+            end
+        end
+
+        report("info", ("saltando de servidor · %d candidatos"):format(#candidates))
+        return Remotes.hopServer(candidates)
+    end,
+
+    ["scan.refresh"] = function()
+        if not Scanner then
+            error("este bridge no escanea (no está en el place del escáner)", 0)
+        end
+        local ok, items = pushScan()
+        if not ok then
+            error("el escaneo falló", 0)
+        end
+        return { count = #items }
+    end,
+
     ["players.refresh"] = function()
+        pace("GetTeleportCandidates")
         local ok, list = pcall(Remotes.getCandidates)
         if not ok then
             error(tostring(list), 0)
@@ -240,6 +453,26 @@ end
 print_("conectado a " .. BASE_URL)
 report("ok", "Bridge listo en JobId " .. tostring(game.JobId))
 
+-- El juego contesta a cada teleport por su cuenta. Sin escucharlo, el
+-- panel diría "hecho" con solo haber disparado el remote.
+local listening, listenError = pcall(Remotes.onTeleportResult, function(result)
+    if result.success then
+        report("ok", ("Teleport de %s aceptado%s"):format(
+            result.userId,
+            result.message ~= "" and (": " .. result.message) or ""
+        ))
+    else
+        report("error", ("Teleport de %s rechazado: %s"):format(
+            result.userId,
+            result.message ~= "" and result.message or "sin motivo"
+        ))
+    end
+end)
+
+if not listening then
+    report("warn", "Sin resultados de teleport: " .. tostring(listenError))
+end
+
 ----------------------------------------------------------------------
 -- bucles
 ----------------------------------------------------------------------
@@ -266,13 +499,12 @@ task.spawn(function()
         else
             backoff = 1
             local commands = payload.commands or {}
-            if #commands > 0 then
-                local results = {}
-                for _, command in ipairs(commands) do
-                    table.insert(results, runCommand(command))
-                    task.wait(0.05) -- respiro entre remotes seguidos
-                end
-                httpJson("POST", "/api/bridge/ack", { results = results })
+            -- Un ack por comando, no uno al final: con lotes largos (y
+            -- los remotes van espaciados) el servidor nos daría por
+            -- caídos antes de terminar. Además el panel va marcando cada
+            -- orden conforme se cumple.
+            for _, command in ipairs(commands) do
+                httpJson("POST", "/api/bridge/ack", { results = { runCommand(command) } })
             end
             task.wait(0.1)
         end
@@ -280,7 +512,22 @@ task.spawn(function()
     print_("poll detenido")
 end)
 
--- 2) Heartbeat + refresco periódico de la lista de jugadores.
+-- 2) Escaneo de plots, si este place lo admite.
+if Scanner then
+    task.spawn(function()
+        while alive() do
+            pushScan()
+            for _ = 1, SCAN_SECONDS do
+                if not alive() then
+                    break
+                end
+                task.wait(1)
+            end
+        end
+    end)
+end
+
+-- 3) Heartbeat + refresco periódico de la lista de jugadores.
 task.spawn(function()
     while alive() do
         pushPlayers()

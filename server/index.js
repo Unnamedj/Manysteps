@@ -41,6 +41,20 @@ const COMMANDS = {
   "time.pause": () => ({}),
   "time.resume": () => ({}),
   "players.refresh": () => ({}),
+  "scan.refresh": () => ({}),
+  "bridge.hop": () => ({}),
+
+  /* Mover al propio bridge de place. El jobId es opcional: sin él cae en
+     cualquier servidor de ese place. */
+  "bridge.teleport"(payload) {
+    const placeId = String(payload.placeId ?? "").trim();
+    if (!ID_RE.test(placeId)) throw new Error("placeId debe ser numérico");
+
+    const jobId = String(payload.jobId ?? "").trim();
+    if (jobId && !JOB_RE.test(jobId)) throw new Error("jobId inválido");
+
+    return jobId ? { placeId, jobId } : { placeId };
+  },
 
   "settings.placeId"(payload) {
     const placeId = String(payload.placeId ?? "").trim();
@@ -50,7 +64,14 @@ const COMMANDS = {
 
   "settings.jobId"(payload) {
     const jobId = String(payload.jobId ?? "").trim();
-    if (!JOB_RE.test(jobId)) throw new Error("jobId inválido");
+    if (!JOB_RE.test(jobId)) {
+      // Decir qué llegó ahorra mucho tiempo cuando se pega un Job ID
+      // con comillas, espacios o algún carácter invisible de más.
+      throw new Error(
+        `Job ID inválido: "${jobId.slice(0, 60)}" (${jobId.length} caracteres). ` +
+          `Se esperan solo letras, números y guiones.`,
+      );
+    }
     return { jobId };
   },
 
@@ -96,12 +117,46 @@ app.get("/api/state", requirePanelAuth, (_req, res) => {
   res.json({ ...store.snapshot(), log: store.recentLog() });
 });
 
+/**
+ * Estado compacto para el mando de Roblox. El /api/state completo lleva
+ * el log entero, demasiado para pedirlo cada segundo y medio desde el
+ * juego; aquí van solo las últimas líneas.
+ */
+app.get("/api/control/state", requirePanelAuth, (_req, res) => {
+  const state = store.snapshot();
+  res.json({
+    serverTime: state.serverTime,
+    online: state.online,
+    bridges: state.bridges.map((b) => ({
+      id: b.id,
+      username: b.username,
+      online: b.online,
+      access: b.access,
+      panelJobId: b.panelJobId,
+      playerCount: b.playerCount,
+      scanner: b.scanner,
+      scanCount: b.scanCount,
+    })),
+    places: state.places,
+    bridgePlaces: state.bridgePlaces,
+    settings: { placeId: state.settings.placeId, jobId: state.settings.jobId },
+    players: state.players.list,
+    pending: state.pending,
+    log: store.recentLog().slice(0, 6).map((entry) => ({
+      at: entry.at,
+      level: entry.level,
+      message: entry.message,
+    })),
+  });
+});
+
 app.get("/api/bootstrap", requirePanelAuth, (req, res) => {
   const base = publicBaseUrl(req);
   res.json({
     baseUrl: base,
     bridgeKey: BRIDGE_KEY,
     loader: `loadstring(game:HttpGet("${base}/script/loader.lua?key=${BRIDGE_KEY}"))()`,
+    controlLoader: `loadstring(game:HttpGet("${base}/script/loader.lua?key=${BRIDGE_KEY}&mode=control"))()`,
   });
 });
 
@@ -120,11 +175,19 @@ app.post("/api/command", requirePanelAuth, (req, res) => {
     return res.status(400).json({ error: err.message });
   }
 
-  const command = store.enqueue(type, payload);
-  res.json({ ok: true, id: command.id });
+  // Sin destino explícito la orden va a todos los bridges: pausar o
+  // fijar el destino tiene sentido en bloque.
+  const result = store.enqueue(type, payload, String(req.body?.target || "all"));
+  if (result.error) return res.status(409).json({ error: result.error });
+
+  res.json({ ok: true, accepted: result.accepted });
 });
 
-/* Envío masivo: una llamada, un teleport por jugador seleccionado. */
+/**
+ * Envío masivo. Cada jugador se manda por el bridge que lo ve en su
+ * partida: mandarlo por otro sería pedirle que teletransporte a alguien
+ * que no tiene delante.
+ */
 app.post("/api/teleport/batch", requirePanelAuth, (req, res) => {
   const targets = Array.isArray(req.body?.targets) ? req.body.targets.slice(0, 50) : [];
   if (targets.length === 0) return res.status(400).json({ error: "sin jugadores" });
@@ -139,7 +202,10 @@ app.post("/api/teleport/batch", requirePanelAuth, (req, res) => {
         placeId: req.body?.placeId,
         jobId: req.body?.jobId,
       });
-      accepted.push(store.enqueue("teleport.send", payload).id);
+
+      const result = store.enqueue("teleport.send", payload, String(target?.bridgeId || "all"));
+      if (result.error) throw new Error(result.error);
+      accepted.push(...result.accepted);
     } catch (err) {
       rejected.push({ userId: target?.userId, error: err.message });
     }
@@ -155,13 +221,35 @@ app.post("/api/teleport/batch", requirePanelAuth, (req, res) => {
 /* API del bridge (script de Roblox)                                   */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Cada bridge se identifica con su cuenta de Roblox. Sin ese id no hay
+ * a quién encolarle nada: con varios conectados, una orden suelta podría
+ * acabar ejecutándose en la partida equivocada.
+ */
+function bridgeIdOf(req) {
+  return String(req.headers["x-bridge-id"] || req.query.bridge || req.body?.userId || "").trim();
+}
+
 app.post("/api/bridge/hello", requireBridgeAuth, (req, res) => {
-  store.touchBridge(req.body ?? {});
-  res.json({ ok: true, settings: store.currentSettings(), serverTime: Date.now() });
+  const id = bridgeIdOf(req);
+  if (!id) return res.status(400).json({ error: "falta el identificador del bridge" });
+
+  const bridge = store.touchBridge(id, req.body ?? {});
+  store.resetScan(id);
+
+  res.json({
+    ok: true,
+    bridgeId: bridge.id,
+    settings: store.currentSettings(),
+    serverTime: Date.now(),
+  });
 });
 
 app.get("/api/bridge/poll", requireBridgeAuth, async (req, res) => {
-  store.touchBridge({
+  const id = bridgeIdOf(req);
+  if (!id) return res.status(400).json({ error: "falta el identificador del bridge" });
+
+  store.touchBridge(id, {
     executor: req.query.executor,
     placeId: req.query.placeId,
     jobId: req.query.jobId,
@@ -170,28 +258,49 @@ app.get("/api/bridge/poll", requireBridgeAuth, async (req, res) => {
   });
 
   const wait = Math.min(Math.max(Number(req.query.wait) || 15, 1), 25) * 1000;
-  const commands = await store.waitForCommands(wait);
+  const commands = await store.waitForCommands(id, wait);
   res.json({ commands, serverTime: Date.now() });
 });
 
 app.post("/api/bridge/ack", requireBridgeAuth, (req, res) => {
-  store.touchBridge();
-  store.ack(Array.isArray(req.body?.results) ? req.body.results : []);
+  const id = bridgeIdOf(req);
+  store.touchBridge(id);
+  store.ack(id, Array.isArray(req.body?.results) ? req.body.results : []);
   res.json({ ok: true });
 });
 
 app.post("/api/bridge/players", requireBridgeAuth, (req, res) => {
-  store.touchBridge();
-  const list = store.setPlayers(req.body?.players);
-  res.json({ ok: true, count: list.length });
+  const id = bridgeIdOf(req);
+  store.touchBridge(id);
+
+  // `players` es opcional: tras cambiar un ajuste el bridge publica solo
+  // el estado del juego, y no queremos que eso vacíe la lista.
+  const players = Array.isArray(req.body?.players)
+    ? store.setPlayers(id, req.body.players)
+    : null;
+  store.setGameState(id, req.body?.game);
+
+  res.json({ ok: true, count: players ? players.length : null });
+});
+
+app.post("/api/bridge/scan", requireBridgeAuth, (req, res) => {
+  const id = bridgeIdOf(req);
+  store.touchBridge(id);
+  const count = store.setScan(id, req.body?.items, req.body?.source);
+  res.json({ ok: true, count });
 });
 
 app.post("/api/bridge/log", requireBridgeAuth, (req, res) => {
-  store.touchBridge();
+  const id = bridgeIdOf(req);
+  store.touchBridge(id);
+
   const level = ["info", "ok", "warn", "error"].includes(req.body?.level)
     ? req.body.level
     : "info";
-  store.log(level, String(req.body?.message ?? "").slice(0, 400), { from: "bridge" });
+  const name = store.bridgeName(store.getBridge(id));
+  store.log(level, `${String(req.body?.message ?? "").slice(0, 400)} · ${name}`, {
+    bridgeName: name,
+  });
   res.json({ ok: true });
 });
 
@@ -219,14 +328,17 @@ async function sendLua(res, file, replacements = {}) {
 app.get("/script/loader.lua", (req, res) => {
   const base = publicBaseUrl(req);
   const key = String(req.query.key ?? "").replace(/["\\\n\r]/g, "");
+  const control = req.query.mode === "control";
+  const target = control ? "control.lua" : "controller.lua";
+
   res.type("text/plain; charset=utf-8").send(
     [
-      "-- Manysteps · loader",
+      `-- Manysteps · loader (${control ? "mando" : "bridge"})`,
       "getgenv().MANYSTEPS_CONFIG = {",
       `    url = "${base}",`,
       `    key = "${key}",`,
       "}",
-      `loadstring(game:HttpGet("${base}/script/controller.lua"))()`,
+      `loadstring(game:HttpGet("${base}/script/${target}"))()`,
       "",
     ].join("\n"),
   );
@@ -237,9 +349,20 @@ app.get("/script/remotes.lua", (_req, res, next) => {
 });
 
 app.get("/script/controller.lua", (req, res, next) => {
-  sendLua(res, "controller.lua", { "@@REMOTES_URL@@": `${publicBaseUrl(req)}/script/remotes.lua` }).catch(
-    next,
-  );
+  const base = publicBaseUrl(req);
+  sendLua(res, "controller.lua", {
+    "@@REMOTES_URL@@": `${base}/script/remotes.lua`,
+    "@@SCANNER_URL@@": `${base}/script/scanner.lua`,
+  }).catch(next);
+});
+
+app.get("/script/scanner.lua", (_req, res, next) => {
+  sendLua(res, "scanner.lua").catch(next);
+});
+
+// El mando: misma consola, pero dibujada dentro de Roblox.
+app.get("/script/control.lua", (_req, res, next) => {
+  sendLua(res, "control.lua").catch(next);
 });
 
 /* ------------------------------------------------------------------ */
@@ -297,7 +420,7 @@ setInterval(() => {
   }
 }, 30_000).unref();
 
-setInterval(() => store.sweepBridge(), 5_000).unref();
+setInterval(() => store.sweepBridges(), 5_000).unref();
 
 /* ------------------------------------------------------------------ */
 

@@ -12,6 +12,12 @@ local function makeRemote(name)
             if name == "GetTeleportCandidates" then
                 return _G.__CANDIDATES
             end
+            if name == "GetAdminSettings" then
+                return _G.__SETTINGS
+            end
+            if name == "ToggleAdminTimePause" then
+                return _G.__TOGGLE_RESULT
+            end
             return "server-ok"
         end,
         FireServer = function(self, ...)
@@ -25,7 +31,9 @@ local folder = {
     ToggleAdminTimePause = makeRemote("ToggleAdminTimePause"),
     SaveAdminSettings = makeRemote("SaveAdminSettings"),
     TeleportSelectedPlayer = makeRemote("TeleportSelectedPlayer"),
+    TeleportSelectedPlayerResult = makeRemote("TeleportSelectedPlayerResult"),
     GetTeleportCandidates = makeRemote("GetTeleportCandidates"),
+    GetAdminSettings = makeRemote("GetAdminSettings"),
 }
 folder.FindFirstChild = function(self, name) return self[name] end
 folder.WaitForChild = function(self, name) return self[name] end
@@ -36,10 +44,80 @@ local replicatedStorage = {
     WaitForChild = function(self, name) return self[name] end,
 }
 
+-- El cuadro Job ID del panel del juego, colgando del PlayerGui.
+local jobBox = {
+    __instance = true,
+    Name = "JobIDBox",
+    Text = "",
+    IsA = function(self, class) return class == "TextBox" end,
+}
+
+local playerGui = {
+    __instance = true,
+    FindFirstChild = function(self, name, recursive)
+        if name == "JobIDBox" and recursive then return _G.__JOB_BOX end
+        return nil
+    end,
+}
+_G.__JOB_BOX = jobBox
+
+local localPlayer = {
+    UserId = 1,
+    Name = "tester",
+    FindFirstChildOfClass = function(self, class)
+        if class == "PlayerGui" then return playerGui end
+        return nil
+    end,
+}
+
+local teleports = {}
+local failHandlers = {}
+
+local teleportService = {
+    Teleport = function(_, placeId, player)
+        table.insert(teleports, { kind = "Teleport", placeId = placeId, player = player })
+        -- Roblox avisa del rechazo por el evento, no rompiendo la llamada.
+        if _G.__TELEPORT_REJECTION then
+            for _, handler in ipairs(failHandlers) do
+                handler(player, "Unauthorized", _G.__TELEPORT_REJECTION)
+            end
+        end
+    end,
+    TeleportToPlaceInstance = function(_, placeId, jobId, player)
+        table.insert(teleports, {
+            kind = "TeleportToPlaceInstance", placeId = placeId, jobId = jobId, player = player,
+        })
+        if _G.__TELEPORT_REJECTION then
+            for _, handler in ipairs(failHandlers) do
+                handler(player, "Unauthorized", _G.__TELEPORT_REJECTION)
+            end
+        end
+    end,
+    TeleportInitFailed = {
+        Connect = function(_, handler)
+            table.insert(failHandlers, handler)
+            return {
+                Disconnect = function()
+                    for index, existing in ipairs(failHandlers) do
+                        if existing == handler then
+                            table.remove(failHandlers, index)
+                            break
+                        end
+                    end
+                end,
+            }
+        end,
+    },
+}
+
+-- El módulo espera task.wait mientras aguarda el posible rechazo.
+task = task or { wait = function() end }
+
 game = {
     GetService = function(self, name)
         if name == "ReplicatedStorage" then return replicatedStorage end
-        if name == "Players" then return { LocalPlayer = { UserId = 1, Name = "tester" } } end
+        if name == "Players" then return { LocalPlayer = localPlayer } end
+        if name == "TeleportService" then return teleportService end
         error("servicio no mockeado: " .. name)
     end,
 }
@@ -134,6 +212,113 @@ check("teleport rechaza userId inválido",
     not pcall(Remotes.teleport, "x", "96342491571673", "job"))
 check("teleport rechaza jobId vacío",
     not pcall(Remotes.teleport, "1", "2", ""))
+
+----------------------------------------------------------------------
+print("cuadro del panel")
+
+Remotes.setPanelJobId("7f3a91c2-8b44-4d1e-9a02-5c6e1d0f4b88")
+check("setPanelJobId escribe en el TextBox del juego",
+    jobBox.Text == "7f3a91c2-8b44-4d1e-9a02-5c6e1d0f4b88", jobBox.Text)
+
+jobBox.Text = "  con-espacios  "
+check("getPanelJobId recorta espacios", Remotes.getPanelJobId() == "con-espacios",
+    Remotes.getPanelJobId())
+
+check("setPanelJobId rechaza vacío", not pcall(Remotes.setPanelJobId, ""))
+
+_G.__JOB_BOX = nil
+local boxOk, boxErr = pcall(Remotes.setPanelJobId, "algo")
+check("sin cuadro avisa de que el panel no está",
+    not boxOk and tostring(boxErr):find("JobIDBox") ~= nil, boxErr)
+check("getPanelJobId sin cuadro devuelve nil", Remotes.getPanelJobId() == nil)
+_G.__JOB_BOX = jobBox
+
+----------------------------------------------------------------------
+print("ajustes del servidor")
+
+_G.__SETTINGS = {
+    rememberJobId = true,
+    rememberPlaceId = false,
+    savedJobId = "abc-123",
+    savedPlaceId = 96342491571673,
+}
+local settings = Remotes.getAdminSettings()
+check("getAdminSettings normaliza la tabla del juego",
+    settings.rememberJobId == true and settings.rememberPlaceId == false
+    and settings.savedJobId == "abc-123" and settings.savedPlaceId == "96342491571673",
+    settings.savedPlaceId)
+
+_G.__SETTINGS = nil
+check("getAdminSettings tolera respuesta vacía",
+    type(Remotes.getAdminSettings()) == "table")
+
+----------------------------------------------------------------------
+print("tiempo rechazado por el servidor")
+
+_G.__TOGGLE_RESULT = { success = false, message = "You cannot teleport anyone while paused." }
+local pauseOk, pauseErr = pcall(Remotes.pauseTime)
+check("un success=false se convierte en error, no en 'hecho'",
+    not pauseOk and tostring(pauseErr):find("cannot teleport") ~= nil, pauseErr)
+
+_G.__TOGGLE_RESULT = { success = true }
+check("success=true pasa sin ruido", (pcall(Remotes.pauseTime)))
+_G.__TOGGLE_RESULT = nil
+
+----------------------------------------------------------------------
+print("mover el propio bridge")
+
+Remotes.moveSelf("78906538690694")
+local move = teleports[#teleports]
+check("sin jobId usa Teleport(placeId, jugador)",
+    move and move.kind == "Teleport" and move.placeId == 78906538690694
+    and move.player == localPlayer,
+    move and (move.kind .. " " .. tostring(move.placeId)))
+
+check("el placeId va como número, no como texto",
+    type(move.placeId) == "number", type(move.placeId))
+
+Remotes.moveSelf("101017811878308", "aa11bb22-cc33-dd44")
+move = teleports[#teleports]
+check("con jobId cae en ese servidor concreto",
+    move.kind == "TeleportToPlaceInstance" and move.placeId == 101017811878308
+    and move.jobId == "aa11bb22-cc33-dd44",
+    move.kind .. " " .. tostring(move.placeId) .. " " .. tostring(move.jobId))
+
+Remotes.moveSelf("78906538690694", "")
+check("un jobId vacío no cuenta como servidor",
+    teleports[#teleports].kind == "Teleport", teleports[#teleports].kind)
+
+check("rechaza un place que no es número", not pcall(Remotes.moveSelf, "por-ahi"))
+
+-- Roblox bloquea el salto entre juegos de creadores distintos, y avisa
+-- por TeleportInitFailed: hay que contarlo, no dar el salto por bueno.
+_G.__TELEPORT_REJECTION =
+    "Cannot teleport from this universe to a universe owned by a different creator (Unauthorized)"
+
+local moveOk, moveErr = pcall(Remotes.moveSelf, "101017811878308")
+check("un teleport rechazado no se da por hecho", not moveOk)
+check("y se cuenta el motivo que dio Roblox",
+    tostring(moveErr):find("different creator") ~= nil, moveErr)
+
+_G.__TELEPORT_REJECTION = nil
+check("sin rechazo, el salto vale", (pcall(Remotes.moveSelf, "101017811878308")))
+
+----------------------------------------------------------------------
+print("saltar de servidor")
+
+game.JobId = "servidor-actual"
+game.PlaceId = 78906538690694
+
+Remotes.hopServer({ "servidor-actual", "otro-servidor", "uno-mas" })
+local hop = teleports[#teleports]
+check("salta al primero que no sea el de ahora",
+    hop.kind == "TeleportToPlaceInstance" and hop.jobId == "otro-servidor",
+    hop.jobId)
+
+check("dentro del mismo place", hop.placeId == 78906538690694, hop.placeId)
+
+check("sin candidatos, lo dice", not pcall(Remotes.hopServer, { "servidor-actual" }))
+check("y con la lista vacía también", not pcall(Remotes.hopServer, {}))
 
 ----------------------------------------------------------------------
 print("candidatos")

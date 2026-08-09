@@ -85,9 +85,16 @@ export function clearSessionCookie(res) {
   res.setHeader("Set-Cookie", `${COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`);
 }
 
-/** Middleware express para las rutas del panel. */
+/**
+ * Middleware express para las rutas del panel.
+ *
+ * Acepta la sesión del navegador o la clave del bridge por cabecera, que
+ * es como entra el mando de Roblox. No abre nada nuevo: quien tiene esa
+ * clave ya podía ejecutar cualquier comando desde el lado del bridge.
+ */
 export function requirePanelAuth(req, res, next) {
   if (isValidSession(sessionFromRequest(req))) return next();
+  if (checkBridgeKey(req.headers["x-control-key"])) return next();
   res.status(401).json({ error: "no autenticado" });
 }
 

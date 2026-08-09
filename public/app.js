@@ -21,18 +21,28 @@ const el = {
   placeForm: $("placeForm"),
   placeInput: $("placeInput"),
   placeHint: $("placeHint"),
+  places: $("places"),
   jobForm: $("jobForm"),
   jobInput: $("jobInput"),
   jobHint: $("jobHint"),
+  useCurrentJob: $("useCurrentJob"),
 
-  metaUser: $("metaUser"),
-  metaExecutor: $("metaExecutor"),
-  metaPlace: $("metaPlace"),
-  metaJob: $("metaJob"),
-  metaPing: $("metaPing"),
+  bridges: $("bridges"),
+  bridgeTag: $("bridgeTag"),
+  targetNote: $("targetNote"),
+  bridgePlaces: $("bridgePlaces"),
 
   roster: $("roster"),
   rosterCount: $("rosterCount"),
+  rosterFoot: $("rosterFoot"),
+  tabPlayers: $("tabPlayers"),
+  tabScan: $("tabScan"),
+  scan: $("scan"),
+  scanList: $("scanList"),
+  scanCount: $("scanCount"),
+  scanFoot: $("scanFoot"),
+  scanSearch: $("scanSearch"),
+  scanRefreshBtn: $("scanRefreshBtn"),
   search: $("search"),
   selectAllBtn: $("selectAllBtn"),
   clearSelBtn: $("clearSelBtn"),
@@ -45,13 +55,18 @@ const el = {
   toasts: $("toasts"),
   loaderModal: $("loaderModal"),
   loaderCode: $("loaderCode"),
+  controlCode: $("controlCode"),
   linkBtn: $("linkBtn"),
   copyLoader: $("copyLoader"),
+  copyControl: $("copyControl"),
   closeLoader: $("closeLoader"),
   logoutBtn: $("logoutBtn"),
 };
 
 const selected = new Set();
+// A qué bridge van las órdenes: "all" o el id de uno concreto.
+let target = "all";
+let tab = "players";
 let snapshot = null;
 let rosterSignature = "";
 let socket = null;
@@ -147,6 +162,7 @@ async function enterConsole() {
   api("/api/bootstrap")
     .then((info) => {
       el.loaderCode.textContent = info.loader;
+      el.controlCode.textContent = info.controlLoader;
     })
     .catch(() => {});
 
@@ -191,25 +207,21 @@ function connectSocket() {
 function applySnapshot(state) {
   snapshot = state;
 
-  // bridge
-  const online = state.bridge.online;
+  // bridges
+  const online = state.online > 0;
   el.bridgeChip.dataset.state = online ? "on" : "off";
-  el.bridgeValue.textContent = online
-    ? state.bridge.username || "en línea"
-    : "desconectado";
+  el.bridgeValue.textContent = !online
+    ? "ninguno"
+    : state.online === 1
+      ? state.bridges.find((b) => b.online)?.username || "1 en línea"
+      : `${state.online} en línea`;
+
+  renderBridges(state.bridges || []);
+  renderBridgePlaces(state.bridgePlaces || []);
 
   // reloj del juego
-  const time = state.time.status;
-  el.clockChip.dataset.state = time === "unknown" ? "unknown" : time;
-  el.clockValue.textContent =
-    time === "paused" ? "pausado" : time === "running" ? "corriendo" : "sin datos";
-
-  document
-    .querySelector('.bigbtn[data-cmd="time.pause"]')
-    ?.setAttribute("data-active", time === "paused" ? "1" : "0");
-  document
-    .querySelector('.bigbtn[data-cmd="time.resume"]')
-    ?.setAttribute("data-active", time === "running" ? "1" : "0");
+  renderClock();
+  renderPlaces(state.places || []);
 
   el.queueValue.textContent = String(state.pending ?? 0);
 
@@ -222,25 +234,442 @@ function applySnapshot(state) {
     : "sin guardar todavía";
   el.placeHint.dataset.ok = state.settings.savedPlaceIdAt ? "1" : "0";
 
-  el.jobHint.textContent = state.settings.savedJobIdAt
-    ? `guardado ${ago(state.settings.savedJobIdAt)}`
-    : "sin guardar todavía";
-  el.jobHint.dataset.ok = state.settings.savedJobIdAt ? "1" : "0";
-
-  // sesión
-  el.metaUser.textContent = state.bridge.username || "—";
-  el.metaExecutor.textContent = state.bridge.executor || "—";
-  el.metaPlace.textContent = state.bridge.placeId || "—";
-  el.metaJob.textContent = state.bridge.jobId || "—";
-  el.metaJob.title = state.bridge.jobId || "";
-  el.metaPing.textContent = ago(state.bridge.lastSeen);
-
   renderRoster();
+  // El contador de la pestaña se actualiza aunque no la estés mirando.
+  el.scanCount.textContent = String(state.scan?.items?.length ?? 0);
+  if (tab === "scan") renderScan();
   renderDestination();
 }
 
+const ACCESS_LABEL = {
+  active: "corriendo",
+  paused: "pausado",
+  permanent: "permanente",
+  locked: "sin acceso",
+  blacklisted: "bloqueado",
+};
+
+/** 1234567 → "1.23M". Los números del juego crecen rápido. */
+function compact(value) {
+  const n = Number(value) || 0;
+  if (n < 1000) return String(Math.round(n));
+  const units = ["K", "M", "B", "T", "Qa", "Qi"];
+  let scaled = n;
+  let unit = -1;
+  while (scaled >= 1000 && unit < units.length - 1) {
+    scaled /= 1000;
+    unit += 1;
+  }
+  return `${scaled >= 100 ? scaled.toFixed(0) : scaled.toFixed(2)}${units[unit]}`;
+}
+
+function mmss(seconds) {
+  const total = Math.max(0, Math.round(seconds));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  const pad = (n) => String(n).padStart(2, "0");
+  return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
+}
+
+/** Segundos que le quedan a un acceso, descontando lo que va corrido. */
+function secondsLeft(access) {
+  if (!access?.status) return Infinity;
+  const running = access.status === "active";
+  const elapsed = running ? (Date.now() - access.readAt) / 1000 : 0;
+  return Math.max(0, access.remainingSeconds - elapsed);
+}
+
+/**
+ * Con varios bridges el chip enseña el que antes se queda sin tiempo,
+ * que es el que te va a dar problemas. Si has fijado uno como destino
+ * de las órdenes, enseña el suyo.
+ */
+function relevantAccess() {
+  const list = (snapshot?.bridges || []).filter((b) => b.online && b.access?.status);
+  if (list.length === 0) return null;
+
+  if (target !== "all") {
+    return list.find((b) => b.id === target)?.access ?? null;
+  }
+
+  const timed = list.filter((b) => b.access.status === "active" || b.access.status === "paused");
+  if (timed.length === 0) return list[0].access;
+
+  return timed.reduce((worst, b) =>
+    secondsLeft(b.access) < secondsLeft(worst.access) ? b : worst,
+  ).access;
+}
+
+function renderClock() {
+  const access = relevantAccess();
+
+  if (!access) {
+    el.clockChip.dataset.state = "unknown";
+    el.clockValue.textContent = "sin datos";
+    return;
+  }
+
+  el.clockChip.dataset.state =
+    access.status === "paused"
+      ? "paused"
+      : access.status === "active" || access.status === "permanent"
+        ? "running"
+        : "off";
+
+  const label = ACCESS_LABEL[access.status] ?? access.status;
+  el.clockValue.textContent =
+    access.status === "active" || access.status === "paused"
+      ? `${label} · ${mmss(secondsLeft(access))}`
+      : label;
+}
+
+/**
+ * Botones para mover a los propios bridges de place. Van al destino que
+ * esté elegido arriba: todos, o solo uno.
+ */
+function renderBridgePlaces(places) {
+  const signature = places.map((p) => p.placeId).join(",");
+  if (el.bridgePlaces.dataset.signature === signature) return;
+  el.bridgePlaces.dataset.signature = signature;
+
+  el.bridgePlaces.replaceChildren();
+
+  for (const place of places) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = place.label;
+    button.title = `Mover ${
+      target === "all" ? "todos los bridges" : "el bridge elegido"
+    } a ${place.label} — ${place.note ?? place.placeId}`;
+
+    button.addEventListener("click", async () => {
+      const who =
+        target === "all"
+          ? `${snapshot?.online ?? 0} bridge(s)`
+          : (snapshot?.bridges ?? []).find((b) => b.id === target)?.username || "el bridge";
+
+      try {
+        await send("bridge.teleport", { placeId: place.placeId });
+        toast(`Moviendo ${who} a ${place.label}`, "ok");
+      } catch {
+        /* el toast de error ya lo pone send() */
+      }
+    });
+
+    el.bridgePlaces.append(button);
+  }
+
+  // Saltar de servidor dentro del mismo place sí lo permite Roblox
+  // siempre; cambiar de juego, no.
+  const hop = document.createElement("button");
+  hop.type = "button";
+  hop.textContent = "otro servidor";
+  hop.dataset.hop = "1";
+  hop.title = "Salta a otro servidor del mismo juego donde ya está";
+  hop.addEventListener("click", () => {
+    send("bridge.hop").then(
+      () => toast("Buscando otro servidor…", "ok"),
+      () => {},
+    );
+  });
+  el.bridgePlaces.append(hop);
+}
+
+/** Lista de bridges conectados y a cuál se le habla. */
+function renderBridges(list) {
+  el.bridgeTag.textContent = `${snapshot?.online ?? 0} en línea`;
+
+  // Si el bridge elegido desaparece, las órdenes vuelven a ir a todos.
+  if (target !== "all" && !list.some((b) => b.id === target && b.online)) {
+    target = "all";
+  }
+
+  el.bridges.replaceChildren();
+
+  if (list.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "bridges__empty";
+    empty.textContent = "ningún bridge conectado todavía";
+    el.bridges.append(empty);
+    el.targetNote.textContent = "pega el loader en una cuenta para empezar";
+    return;
+  }
+
+  const rows = [{ id: "all", username: "Todos los bridges", online: true, all: true }, ...list];
+
+  for (const bridge of rows) {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "bridge";
+    row.dataset.selected = target === bridge.id ? "1" : "0";
+    row.dataset.online = bridge.online ? "1" : "0";
+
+    const led = document.createElement("i");
+    led.className = "led";
+    if (bridge.all) {
+      led.style.background = "var(--blue)";
+    } else if (bridge.online) {
+      led.style.background = "var(--acid)";
+    } else {
+      led.style.background = "var(--red)";
+    }
+
+    const who = document.createElement("span");
+    who.className = "bridge__who";
+    const name = document.createElement("b");
+    name.textContent = bridge.username;
+    const detail = document.createElement("span");
+
+    if (bridge.all) {
+      const count = list.filter((b) => b.online).length;
+      detail.textContent = `${count} conectado${count === 1 ? "" : "s"}`;
+    } else if (!bridge.online) {
+      detail.textContent = `caído ${ago(bridge.lastSeen)}`;
+    } else {
+      const job = bridge.panelJobId ? bridge.panelJobId.slice(0, 8) + "…" : "sin job";
+      detail.textContent = `${bridge.playerCount} jugador${
+        bridge.playerCount === 1 ? "" : "es"
+      } · ${job}`;
+    }
+    who.append(name, detail);
+
+    row.append(led, who);
+
+    if (!bridge.all && bridge.access?.status) {
+      const clockEl = document.createElement("span");
+      clockEl.className = "bridge__clock";
+      clockEl.dataset.state = bridge.access.status;
+      clockEl.textContent =
+        bridge.access.status === "active" || bridge.access.status === "paused"
+          ? mmss(secondsLeft(bridge.access))
+          : ACCESS_LABEL[bridge.access.status] ?? "";
+      row.append(clockEl);
+    }
+
+    row.addEventListener("click", () => {
+      target = bridge.id;
+      renderBridges(snapshot?.bridges || []);
+      renderRoster();
+      renderScan();
+      renderClock();
+    });
+
+    el.bridges.append(row);
+  }
+
+  el.targetNote.textContent =
+    target === "all"
+      ? "las órdenes van a todos"
+      : `las órdenes van solo a ${list.find((b) => b.id === target)?.username ?? target}`;
+}
+
+function renderPlaces(places) {
+  const current = el.placeInput.value.trim();
+  const signature = places.map((p) => p.placeId).join(",");
+
+  if (el.places.dataset.signature !== signature) {
+    el.places.dataset.signature = signature;
+    el.places.replaceChildren();
+
+    for (const place of places) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = place.label.replace(/^SAB\s+/, "");
+      button.title = `${place.label} · ${place.placeId}`;
+      button.dataset.placeId = place.placeId;
+      button.addEventListener("click", () => {
+        el.placeInput.value = place.placeId;
+        el.placeInput.dataset.dirty = "1";
+        renderPlaces(snapshot?.places || []);
+        renderDestination();
+      });
+      el.places.append(button);
+    }
+  }
+
+  for (const button of el.places.children) {
+    button.dataset.active = button.dataset.placeId === current ? "1" : "0";
+  }
+}
+
+/**
+ * Lo que los bridges han escaneado en sus plots. Solo lectura: aquí no
+ * se manda nada al juego, es la foto de lo que hay.
+ */
+function renderScan() {
+  const scan = snapshot?.scan ?? { items: [], updatedAt: 0 };
+  const all = scan.items ?? [];
+  const filtered = target === "all" ? all : all.filter((i) => i.bridgeId === target);
+
+  const query = el.scanSearch.value.trim().toLowerCase();
+  const visible = query
+    ? filtered.filter(
+        (i) =>
+          i.name.toLowerCase().includes(query) ||
+          i.owner.toLowerCase().includes(query) ||
+          i.mutation.toLowerCase().includes(query),
+      )
+    : filtered;
+
+  el.scanCount.textContent = String(all.length);
+  el.scanList.replaceChildren();
+
+  if (visible.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "scan__empty";
+    const scanners = (snapshot?.bridges ?? []).filter((b) => b.online && b.scanner).length;
+    empty.textContent = all.length
+      ? "nada coincide con la búsqueda"
+      : scanners > 0
+        ? "escaneando…"
+        : "ningún bridge está en el place del escáner";
+    el.scanList.append(empty);
+    el.scanFoot.textContent = scan.updatedAt
+      ? `0 de ${all.length} · actualizado ${ago(scan.updatedAt)}`
+      : "sin datos todavía";
+    return;
+  }
+
+  // Agrupado por dueño: lo que interesa es de quién es cada cosa, no una
+  // lista plana de objetos sueltos.
+  const byOwner = new Map();
+  for (const item of visible) {
+    const key = item.owner || "Unclaimed";
+    if (!byOwner.has(key)) byOwner.set(key, []);
+    byOwner.get(key).push(item);
+  }
+
+  // Quien más genera, primero — y si nadie genera, quien más tiene.
+  // Los plots libres, al final.
+  const totalOf = (items) => items.reduce((sum, i) => sum + (Number(i.generation) || 0), 0);
+
+  const owners = [...byOwner.entries()].sort((a, b) => {
+    const aFree = a[0] === "Unclaimed";
+    const bFree = b[0] === "Unclaimed";
+    if (aFree !== bFree) return aFree ? 1 : -1;
+    return (
+      totalOf(b[1]) - totalOf(a[1]) ||
+      b[1].length - a[1].length ||
+      a[0].localeCompare(b[0])
+    );
+  });
+
+  // Un dueño que además está en la lista de teleport se puede mandar
+  // desde aquí mismo.
+  const players = new Map(
+    (snapshot?.players?.list ?? []).map((p) => [p.username.toLowerCase(), p]),
+  );
+
+  for (const [owner, items] of owners) {
+    const player = players.get(owner.toLowerCase());
+
+    const head = document.createElement(player ? "button" : "div");
+    head.className = "scan__owner-head";
+    if (player) {
+      head.type = "button";
+      head.dataset.linked = "1";
+      head.title = `${owner} está en la lista — pulsa para seleccionarlo`;
+      head.addEventListener("click", () => {
+        selected.add(player.userId);
+        setTab("players");
+        renderRoster();
+        toast(`${owner} seleccionado para teleport`, "ok");
+      });
+    }
+
+    const name = document.createElement("b");
+    name.textContent = owner === "Unclaimed" ? "sin dueño" : owner;
+    head.append(name);
+
+    if (player) {
+      const mark = document.createElement("i");
+      mark.className = "scan__linked";
+      mark.textContent = "en la lista";
+      head.append(mark);
+    }
+
+    const total = items.reduce((sum, i) => sum + (Number(i.generation) || 0), 0);
+
+    const count = document.createElement("span");
+    count.textContent =
+      total > 0
+        ? `${items.length} · ${compact(total)}/s`
+        : `${items.length} objeto${items.length === 1 ? "" : "s"}`;
+    count.title = `${items.length} objeto${items.length === 1 ? "" : "s"}`;
+    head.append(count);
+
+    el.scanList.append(head);
+
+    for (const item of items.slice(0, 200)) {
+      const row = document.createElement("div");
+      row.className = "scan__row";
+
+      const itemName = document.createElement("span");
+      itemName.className = "scan__name";
+      itemName.textContent = item.name;
+      row.append(itemName);
+
+      if (item.mutation) {
+        const mutation = document.createElement("i");
+        mutation.className = "scan__mut";
+        mutation.textContent = item.mutation;
+        row.append(mutation);
+      }
+
+      for (const trait of item.traits ?? []) {
+        const tag = document.createElement("i");
+        tag.className = "scan__trait";
+        tag.textContent = trait;
+        row.append(tag);
+      }
+
+      if (item.generation > 0) {
+        const gen = document.createElement("span");
+        gen.className = "scan__gen";
+        gen.textContent = `${compact(item.generation)}/s`;
+        row.append(gen);
+      }
+
+      const plot = document.createElement("span");
+      plot.className = "scan__plot";
+      plot.textContent = item.slot > 0 ? `${item.plot} · ${item.slot}` : item.plot;
+      plot.title = `visto por ${item.bridgeName}`;
+      row.append(plot);
+
+      el.scanList.append(row);
+    }
+  }
+
+  const grand = totalOf(visible);
+  const origin = scan.source === "workspace" ? " · leído del Workspace" : "";
+
+  el.scanFoot.textContent = scan.updatedAt
+    ? `${visible.length} objeto${visible.length === 1 ? "" : "s"} · ${owners.length} dueño${
+        owners.length === 1 ? "" : "s"
+      }${grand > 0 ? ` · ${compact(grand)}/s en total` : ""} · ${ago(
+        scan.updatedAt,
+      )}${origin}`
+    : "sin datos todavía";
+}
+
+function setTab(next) {
+  tab = next;
+  el.tabPlayers.dataset.active = next === "players" ? "1" : "0";
+  el.tabScan.dataset.active = next === "scan" ? "1" : "0";
+
+  el.roster.hidden = next !== "players";
+  el.rosterFoot.hidden = next !== "players";
+  document.querySelector(".roster__tools").hidden = next !== "players";
+  el.scan.hidden = next !== "scan";
+
+  if (next === "scan") renderScan();
+}
+
 function renderRoster() {
-  const list = snapshot?.players?.list ?? [];
+  const all = snapshot?.players?.list ?? [];
+  // Con un bridge fijado, solo los que ese bridge tiene delante.
+  const list = target === "all" ? all : all.filter((p) => p.bridgeId === target);
   const query = el.search.value.trim().toLowerCase();
   const visible = query
     ? list.filter(
@@ -264,9 +693,9 @@ function renderRoster() {
       empty.className = "roster__empty";
       empty.textContent = list.length
         ? "ningún jugador coincide con la búsqueda"
-        : snapshot?.bridge?.online
+        : (snapshot?.online ?? 0) > 0
           ? "esperando la lista de GetTeleportCandidates…"
-          : "conecta el bridge para ver jugadores";
+          : "conecta un bridge para ver jugadores";
       el.roster.append(empty);
     } else {
       for (const player of visible) el.roster.append(rosterItem(player));
@@ -280,11 +709,11 @@ function renderRoster() {
   }
 
   // Limpia selecciones de jugadores que ya no están.
-  const alive = new Set(list.map((p) => p.userId));
+  const alive = new Set(all.map((p) => p.userId));
   for (const id of [...selected]) if (!alive.has(id)) selected.delete(id);
 
   el.selCount.textContent = `${selected.size} seleccionado${selected.size === 1 ? "" : "s"}`;
-  el.sendBtn.disabled = selected.size === 0 || !snapshot?.bridge?.online;
+  el.sendBtn.disabled = selected.size === 0 || (snapshot?.online ?? 0) === 0;
 }
 
 function rosterItem(player) {
@@ -322,6 +751,14 @@ function rosterItem(player) {
   handle.textContent = `@${player.username} · ${player.userId}`;
   who.append(name, handle);
 
+  // De qué partida viene: con varios bridges hace falta saberlo.
+  if ((snapshot?.online ?? 0) > 1 && player.bridgeName) {
+    const from = document.createElement("i");
+    from.className = "tagline";
+    from.textContent = player.bridgeName;
+    name.append(from);
+  }
+
   item.append(tick, avatar, who);
   item.addEventListener("click", () => {
     if (selected.has(player.userId)) selected.delete(player.userId);
@@ -333,7 +770,33 @@ function rosterItem(player) {
   return item;
 }
 
+// El Job ID que cuenta es el del cuadro del panel del juego, no el que
+// creemos haber mandado. Se recalcula tanto al llegar estado nuevo como
+// mientras se escribe.
+function renderJobHint() {
+  const panelJobId = snapshot?.game?.panelJobId ?? null;
+  const typed = el.jobInput.value.trim();
+
+  if (panelJobId === null) {
+    el.jobHint.textContent = snapshot?.settings?.savedJobIdAt
+      ? `guardado ${ago(snapshot.settings.savedJobIdAt)}`
+      : "sin guardar todavía";
+    el.jobHint.dataset.ok = "0";
+  } else if (panelJobId === "") {
+    el.jobHint.textContent = "el panel del juego lo tiene vacío";
+    el.jobHint.dataset.ok = "0";
+  } else if (panelJobId === typed) {
+    el.jobHint.textContent = "activo en el panel del juego";
+    el.jobHint.dataset.ok = "1";
+  } else {
+    el.jobHint.textContent = `el panel del juego tiene ${panelJobId.slice(0, 18)}…`;
+    el.jobHint.dataset.ok = "0";
+  }
+}
+
 function renderDestination() {
+  renderJobHint();
+
   const placeId = el.placeInput.value.trim() || snapshot?.settings?.placeId || "";
   const jobId = el.jobInput.value.trim() || snapshot?.settings?.jobId || "";
 
@@ -375,7 +838,7 @@ function logLine(entry) {
 
 async function send(type, payload = {}) {
   try {
-    await api("/api/command", { method: "POST", body: { type, payload } });
+    await api("/api/command", { method: "POST", body: { type, payload, target } });
   } catch (error) {
     toast(error.message, "error");
     throw error;
@@ -384,8 +847,8 @@ async function send(type, payload = {}) {
 
 for (const button of document.querySelectorAll(".bigbtn[data-cmd]")) {
   button.addEventListener("click", () => {
-    if (!snapshot?.bridge?.online) {
-      toast("El bridge no está conectado", "error");
+    if ((snapshot?.online ?? 0) === 0) {
+      toast("No hay ningún bridge conectado", "error");
       return;
     }
     send(button.dataset.cmd).catch(() => {});
@@ -396,6 +859,7 @@ el.placeForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   await send("settings.placeId", { placeId: el.placeInput.value.trim() }).catch(() => {});
   delete el.placeInput.dataset.dirty;
+  renderPlaces(snapshot?.places || []);
   renderDestination();
 });
 
@@ -406,14 +870,36 @@ el.jobForm.addEventListener("submit", async (event) => {
   renderDestination();
 });
 
+// Copia el JobId del servidor donde corre el bridge: es el destino que
+// se quiere el 90% de las veces y evita teclear un UUID a mano.
+el.useCurrentJob.addEventListener("click", () => {
+  const jobId = snapshot?.bridge?.jobId;
+  if (!jobId) {
+    toast("El bridge todavía no ha reportado su Job ID", "error");
+    return;
+  }
+  el.jobInput.value = jobId;
+  el.jobInput.dataset.dirty = "1";
+  renderDestination();
+  toast("Job ID del servidor actual — pulsa guardar", "info");
+});
+
 for (const input of [el.placeInput, el.jobInput]) {
   input.addEventListener("input", () => {
     input.dataset.dirty = "1";
+    renderPlaces(snapshot?.places || []);
     renderDestination();
   });
 }
 
 el.search.addEventListener("input", renderRoster);
+el.scanSearch.addEventListener("input", renderScan);
+el.tabPlayers.addEventListener("click", () => setTab("players"));
+el.tabScan.addEventListener("click", () => setTab("scan"));
+
+el.scanRefreshBtn.addEventListener("click", () => {
+  send("scan.refresh").catch(() => {});
+});
 
 el.selectAllBtn.addEventListener("click", () => {
   for (const node of el.roster.children) {
@@ -440,7 +926,7 @@ el.sendBtn.addEventListener("click", async () => {
   const list = snapshot?.players?.list ?? [];
   const targets = list
     .filter((p) => selected.has(p.userId))
-    .map((p) => ({ userId: p.userId, username: p.username }));
+    .map((p) => ({ userId: p.userId, username: p.username, bridgeId: p.bridgeId }));
 
   if (targets.length === 0) return;
 
@@ -471,22 +957,35 @@ el.sendBtn.addEventListener("click", async () => {
 
 el.linkBtn.addEventListener("click", () => el.loaderModal.showModal());
 el.closeLoader.addEventListener("click", () => el.loaderModal.close());
-el.copyLoader.addEventListener("click", async () => {
+
+async function copy(text, what) {
   try {
-    await navigator.clipboard.writeText(el.loaderCode.textContent);
-    toast("Loader copiado", "ok");
+    await navigator.clipboard.writeText(text);
+    toast(`${what} copiado`, "ok");
   } catch {
     toast("No se pudo copiar — selecciónalo a mano", "error");
   }
-});
+}
+
+el.copyLoader.addEventListener("click", () => copy(el.loaderCode.textContent, "Loader del bridge"));
+el.copyControl.addEventListener("click", () => copy(el.controlCode.textContent, "Loader del mando"));
 
 /* ------------------------------------------------------------------ */
 /* arranque                                                            */
 /* ------------------------------------------------------------------ */
 
+// Las cuentas atrás corren en el navegador; los bridges solo releen el
+// estado del juego cada veinte segundos.
 setInterval(() => {
-  if (snapshot?.bridge) el.metaPing.textContent = ago(snapshot.bridge.lastSeen);
-}, 5000);
+  if (!snapshot?.bridges?.length) return;
+  renderClock();
+  for (const row of el.bridges.children) {
+    const clockEl = row.querySelector?.(".bridge__clock");
+    if (!clockEl) continue;
+    const bridge = snapshot.bridges.find((b) => b.username === row.querySelector("b").textContent);
+    if (bridge?.access?.status === "active") clockEl.textContent = mmss(secondsLeft(bridge.access));
+  }
+}, 1000);
 
 (async function boot() {
   try {
