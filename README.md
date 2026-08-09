@@ -99,6 +99,12 @@ en la pestaña **Escaneo**, junto a la de jugadores.
 Solo manda datos. No dibuja nada dentro del juego: ni ESP, ni carteles,
 ni bucles de render. En cualquier otro place el escáner ni se carga.
 
+La lista va **agrupada por dueño**: cada persona con sus cosas debajo, el
+que más tiene primero y los plots libres al final. Si ese dueño está
+además en la lista de jugadores, sale marcado como **en la lista** y al
+pulsarlo se selecciona para teleport — de ver qué tiene a mandarlo, en un
+clic.
+
 Un bridge puede escanear aunque ese juego no tenga `AdminEvents` — sirve
 solo para mirar. Y al revés: el que ejecuta remotes no escanea si no está
 en ese place. En el panel se distingue cuál hace qué.

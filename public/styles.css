@@ -1034,17 +1034,72 @@ body {
   align-content: start;
 }
 
+/* Cabecera de cada dueño: lo escaneado se lee por persona. */
+.scan__owner-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  margin: 10px 0 2px;
+  padding: 4px 10px;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  font: inherit;
+  color: inherit;
+}
+
+.scan__owner-head:first-child {
+  margin-top: 0;
+}
+
+.scan__owner-head b {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  letter-spacing: 0.04em;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.scan__owner-head span {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-faint);
+}
+
+.scan__owner-head[data-linked="1"] {
+  cursor: pointer;
+}
+
+.scan__owner-head[data-linked="1"]:hover b {
+  color: var(--acid);
+}
+
+.scan__linked {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--acid);
+  border: 1px solid var(--acid-dim);
+  border-radius: 99px;
+  padding: 0 6px;
+  font-style: normal;
+}
+
 .scan__row {
   display: flex;
   align-items: baseline;
   gap: 10px;
-  padding: 5px 10px;
+  padding: 4px 10px 4px 20px;
   border-radius: var(--radius);
   font-size: 12.5px;
 }
 
-.scan__row:nth-child(odd) {
-  background: rgba(255, 255, 255, 0.014);
+.scan__row:hover {
+  background: rgba(255, 255, 255, 0.02);
 }
 
 .scan__name {
@@ -1081,6 +1136,7 @@ body {
   font-size: 10px;
   color: var(--text-faint);
   flex-shrink: 0;
+  margin-left: auto;
 }
 
 .scan__foot {

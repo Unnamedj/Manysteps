@@ -457,15 +457,77 @@ function renderScan() {
         ? "escaneando…"
         : "ningún bridge está en el place del escáner";
     el.scanList.append(empty);
-  } else {
-    for (const item of visible.slice(0, 500)) {
+    el.scanFoot.textContent = scan.updatedAt
+      ? `0 de ${all.length} · actualizado ${ago(scan.updatedAt)}`
+      : "sin datos todavía";
+    return;
+  }
+
+  // Agrupado por dueño: lo que interesa es de quién es cada cosa, no una
+  // lista plana de objetos sueltos.
+  const byOwner = new Map();
+  for (const item of visible) {
+    const key = item.owner || "Unclaimed";
+    if (!byOwner.has(key)) byOwner.set(key, []);
+    byOwner.get(key).push(item);
+  }
+
+  // Quien más tiene, primero; los plots libres al final.
+  const owners = [...byOwner.entries()].sort((a, b) => {
+    const aFree = a[0] === "Unclaimed";
+    const bFree = b[0] === "Unclaimed";
+    if (aFree !== bFree) return aFree ? 1 : -1;
+    return b[1].length - a[1].length || a[0].localeCompare(b[0]);
+  });
+
+  // Un dueño que además está en la lista de teleport se puede mandar
+  // desde aquí mismo.
+  const players = new Map(
+    (snapshot?.players?.list ?? []).map((p) => [p.username.toLowerCase(), p]),
+  );
+
+  for (const [owner, items] of owners) {
+    const player = players.get(owner.toLowerCase());
+
+    const head = document.createElement(player ? "button" : "div");
+    head.className = "scan__owner-head";
+    if (player) {
+      head.type = "button";
+      head.dataset.linked = "1";
+      head.title = `${owner} está en la lista — pulsa para seleccionarlo`;
+      head.addEventListener("click", () => {
+        selected.add(player.userId);
+        setTab("players");
+        renderRoster();
+        toast(`${owner} seleccionado para teleport`, "ok");
+      });
+    }
+
+    const name = document.createElement("b");
+    name.textContent = owner === "Unclaimed" ? "sin dueño" : owner;
+    head.append(name);
+
+    if (player) {
+      const mark = document.createElement("i");
+      mark.className = "scan__linked";
+      mark.textContent = "en la lista";
+      head.append(mark);
+    }
+
+    const count = document.createElement("span");
+    count.textContent = `${items.length} objeto${items.length === 1 ? "" : "s"}`;
+    head.append(count);
+
+    el.scanList.append(head);
+
+    for (const item of items.slice(0, 200)) {
       const row = document.createElement("div");
       row.className = "scan__row";
 
-      const name = document.createElement("span");
-      name.className = "scan__name";
-      name.textContent = item.name;
-      row.append(name);
+      const itemName = document.createElement("span");
+      itemName.className = "scan__name";
+      itemName.textContent = item.name;
+      row.append(itemName);
 
       if (item.mutation) {
         const mutation = document.createElement("i");
@@ -474,15 +536,10 @@ function renderScan() {
         row.append(mutation);
       }
 
-      const owner = document.createElement("span");
-      owner.className = "scan__owner";
-      owner.textContent = item.owner;
-      owner.title = `${item.plot} · visto por ${item.bridgeName}`;
-      row.append(owner);
-
       const plot = document.createElement("span");
       plot.className = "scan__plot";
       plot.textContent = item.plot;
+      plot.title = `visto por ${item.bridgeName}`;
       row.append(plot);
 
       el.scanList.append(row);
@@ -490,7 +547,9 @@ function renderScan() {
   }
 
   el.scanFoot.textContent = scan.updatedAt
-    ? `${visible.length} de ${all.length} · actualizado ${ago(scan.updatedAt)}`
+    ? `${visible.length} objeto${visible.length === 1 ? "" : "s"} · ${owners.length} dueño${
+        owners.length === 1 ? "" : "s"
+      } · actualizado ${ago(scan.updatedAt)}`
     : "sin datos todavía";
 }
 
