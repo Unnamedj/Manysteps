@@ -4,6 +4,8 @@
  * No hace falta Studio ni un executor:
  *   - remotes.test.lua  comprueba que cada función llama al remote
  *                       correcto con los argumentos y tipos exactos.
+ *   - scanner.test.lua  recorre un Workspace de mentira y comprueba qué
+ *                       encuentra y qué descarta.
  *   - control.test.lua  carga el mando entero sobre un Roblox mockeado y
  *                       dispara los clics para ver qué manda al panel.
  *
@@ -25,6 +27,11 @@ const suites = [
     name: "remotes.lua",
     test: "remotes.test.lua",
     globals: { REMOTES_SRC: read("..", "roblox", "remotes.lua") },
+  },
+  {
+    name: "scanner.lua",
+    test: "scanner.test.lua",
+    globals: { SCANNER_SRC: read("..", "roblox", "scanner.lua") },
   },
   {
     name: "control.lua",

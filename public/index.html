@@ -155,7 +155,6 @@
               <form class="field" id="placeForm">
                 <div class="field__top">
                   <span class="field__label">Place ID</span>
-                  <span class="places" id="places"></span>
                   <button class="linkbtn" type="submit">guardar →</button>
                 </div>
                 <input
@@ -164,7 +163,10 @@
                   inputmode="numeric"
                   placeholder="96342491571673"
                 />
-                <span class="field__hint" id="placeHint">sin guardar todavía</span>
+                <div class="places-row">
+                  <span class="places" id="places"></span>
+                  <span class="field__hint" id="placeHint">sin guardar todavía</span>
+                </div>
               </form>
 
               <form class="field" id="jobForm">
@@ -202,8 +204,14 @@
         <div class="col">
           <section class="panel panel--grow">
             <header class="panel__head">
-              <h2>Jugadores</h2>
-              <span class="panel__tag" id="rosterCount">0</span>
+              <div class="tabs" role="tablist">
+                <button class="tab" id="tabPlayers" data-active="1" type="button" role="tab">
+                  Jugadores <b id="rosterCount">0</b>
+                </button>
+                <button class="tab" id="tabScan" data-active="0" type="button" role="tab">
+                  Escaneo <b id="scanCount">0</b>
+                </button>
+              </div>
               <button class="iconbtn" id="refreshBtn" type="button" title="Refrescar lista">
                 <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
                   <path
@@ -236,7 +244,25 @@
 
             <div class="roster" id="roster" role="list"></div>
 
-            <footer class="roster__foot">
+            <!-- vista de escaneo: solo datos, el juego no dibuja nada -->
+            <div class="scan" id="scan" hidden>
+              <div class="scan__tools">
+                <div class="search">
+                  <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
+                    <circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="2" />
+                    <path d="m16 16 4.5 4.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                  </svg>
+                  <input id="scanSearch" type="search" placeholder="Buscar objeto, dueño o mutación…" autocomplete="off" />
+                </div>
+                <button class="btn btn--ghost btn--sm" id="scanRefreshBtn" type="button">
+                  Escanear
+                </button>
+              </div>
+              <div class="scan__list" id="scanList"></div>
+              <footer class="scan__foot" id="scanFoot">sin datos todavía</footer>
+            </div>
+
+            <footer class="roster__foot" id="rosterFoot">
               <div class="roster__summary">
                 <span class="counter" id="selCount">0</span>
                 <span class="roster__dest" id="destSummary">selecciona un destino</span>

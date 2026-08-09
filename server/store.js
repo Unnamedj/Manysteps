@@ -15,7 +15,12 @@ const ACCESS_STATES = new Set(["blacklisted", "permanent", "paused", "active", "
 export const PLACES = [
   { label: "SAB New Player", placeId: "96342491571673" },
   { label: "SAB Normal", placeId: "109983668079237" },
+  { label: "Brainrots", placeId: "78906538690694" },
+  { label: "Remotes", placeId: "101017811878308" },
 ];
+
+/** El place donde el escáner de plots tiene sentido. */
+export const SCAN_PLACE_ID = "78906538690694";
 
 /**
  * Estado central del panel. Vive en memoria: Railway reinicia el contenedor
@@ -115,6 +120,8 @@ function blankBridge(id) {
       updatedAt: 0,
     },
     access: { status: null, remainingSeconds: 0, readAt: 0 },
+    // Lo último que escaneó, si está en el place del escáner.
+    scan: { items: [], updatedAt: 0, supported: false },
     queue: [],
     inflight: new Map(),
     waiters: [],
@@ -467,6 +474,33 @@ export function aggregatedPlayers() {
 /* estado del juego por bridge                                         */
 /* ------------------------------------------------------------------ */
 
+const MAX_SCAN_ITEMS = 400;
+
+/** Guarda el escaneo de plots que manda un bridge. */
+export function setScan(bridgeId, rawItems) {
+  const bridge = getBridge(bridgeId);
+  if (!bridge) return 0;
+
+  const text = (value, limit) => String(value ?? "").slice(0, limit);
+  const items = [];
+
+  for (const raw of Array.isArray(rawItems) ? rawItems : []) {
+    if (items.length >= MAX_SCAN_ITEMS) break;
+    const name = text(raw?.name, 60).trim();
+    if (!name) continue;
+    items.push({
+      name,
+      plot: text(raw?.plot, 40).trim(),
+      owner: text(raw?.owner, 40).trim() || "Unclaimed",
+      mutation: text(raw?.mutation, 30).trim(),
+    });
+  }
+
+  bridge.scan = { items, updatedAt: Date.now(), supported: true };
+  emitSnapshot();
+  return items.length;
+}
+
 export function setGameState(bridgeId, raw) {
   const bridge = getBridge(bridgeId);
   if (!bridge || !raw || typeof raw !== "object") return;
@@ -477,8 +511,11 @@ export function setGameState(bridgeId, raw) {
     panelJobId: read(raw.panelJobId),
     savedJobId: read(raw.savedJobId),
     savedPlaceId: read(raw.savedPlaceId),
+    hasRemotes: raw.hasRemotes !== false,
     updatedAt: Date.now(),
   };
+
+  if (raw.scanner === true) bridge.scan.supported = true;
 
   const access = raw.access;
   if (access && ACCESS_STATES.has(access.status)) {
@@ -507,7 +544,11 @@ function publicBridge(bridge) {
     online: bridge.online,
     lastSeen: bridge.lastSeen,
     panelJobId: bridge.game.panelJobId,
+    hasRemotes: bridge.game.hasRemotes !== false,
     access: { ...bridge.access },
+    scanner: bridge.scan.supported === true,
+    scanCount: bridge.scan.items.length,
+    scanAt: bridge.scan.updatedAt,
     playerCount: bridge.players.length,
     pending: bridge.queue.length + bridge.inflight.size,
   };
@@ -532,6 +573,7 @@ export function snapshot() {
     settings: { ...state.settings },
     places: PLACES,
     players: { list: players, updatedAt: Date.now() },
+    scan: aggregatedScan(),
     pending,
     history: history.slice(0, 20).map((c) => ({
       id: c.id,
@@ -543,6 +585,23 @@ export function snapshot() {
       error: c.error,
     })),
   };
+}
+
+/** Todo lo escaneado por los bridges que escanean, con su origen. */
+export function aggregatedScan() {
+  const items = [];
+  let updatedAt = 0;
+
+  for (const bridge of onlineBridges()) {
+    if (!bridge.scan.supported) continue;
+    updatedAt = Math.max(updatedAt, bridge.scan.updatedAt);
+    for (const item of bridge.scan.items) {
+      items.push({ ...item, bridgeName: bridgeName(bridge), bridgeId: bridge.id });
+    }
+  }
+
+  items.sort((a, b) => a.owner.localeCompare(b.owner) || a.name.localeCompare(b.name));
+  return { items, updatedAt };
 }
 
 export function recentLog() {

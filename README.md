@@ -54,6 +54,7 @@ con el mismo servidor, así que se ven el uno al otro en tiempo real.
 | Listar jugadores | `GetTeleportCandidates:InvokeServer()` |
 | Leer los ajustes | `GetAdminSettings:InvokeServer()` |
 | Estado del acceso | `GetAccessStatus:InvokeServer()` |
+| Escanear los plots | recorre `Workspace` — sin remotes |
 | Resultado del teleport | `TeleportSelectedPlayerResult.OnClientEvent` |
 
 El panel y el mando muestran el **tiempo de acceso que queda**, tal y
@@ -89,6 +90,30 @@ persista entre sesiones, activa **Remember Job ID** dentro del juego.
 El panel web muestra en todo momento lo que hay en el cuadro, leído del
 juego — no lo último que se mandó.
 
+## Escáner de plots
+
+Un bridge que esté en el place **78906538690694** escanea los plots y
+manda al panel qué hay en cada uno: objeto, mutación, plot y dueño. Se ve
+en la pestaña **Escaneo**, junto a la de jugadores.
+
+Solo manda datos. No dibuja nada dentro del juego: ni ESP, ni carteles,
+ni bucles de render. En cualquier otro place el escáner ni se carga.
+
+Un bridge puede escanear aunque ese juego no tenga `AdminEvents` — sirve
+solo para mirar. Y al revés: el que ejecuta remotes no escanea si no está
+en ese place. En el panel se distingue cuál hace qué.
+
+Los cuatro destinos disponibles para teleport son:
+
+| Nombre | Place ID |
+| --- | --- |
+| SAB New Player | `96342491571673` |
+| SAB Normal | `109983668079237` |
+| Brainrots | `78906538690694` |
+| Remotes | `101017811878308` |
+
+Se cambian en `PLACES`, en `server/store.js`.
+
 ## Estructura
 
 ```
@@ -101,6 +126,7 @@ roblox/
   remotes.lua    capa de remotes — solo llama a AdminEvents
   controller.lua bridge: pregunta al panel qué hacer y lo ejecuta
   control.lua    mando: la consola dibujada dentro de Roblox
+  scanner.lua    lee los plots del place del escáner y los reporta
 tests/           pruebas de los scripts sobre un Roblox mockeado
 ```
 

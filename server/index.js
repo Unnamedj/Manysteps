@@ -41,6 +41,7 @@ const COMMANDS = {
   "time.pause": () => ({}),
   "time.resume": () => ({}),
   "players.refresh": () => ({}),
+  "scan.refresh": () => ({}),
 
   "settings.placeId"(payload) {
     const placeId = String(payload.placeId ?? "").trim();
@@ -120,6 +121,8 @@ app.get("/api/control/state", requirePanelAuth, (_req, res) => {
       access: b.access,
       panelJobId: b.panelJobId,
       playerCount: b.playerCount,
+      scanner: b.scanner,
+      scanCount: b.scanCount,
     })),
     places: state.places,
     settings: { placeId: state.settings.placeId, jobId: state.settings.jobId },
@@ -264,6 +267,13 @@ app.post("/api/bridge/players", requireBridgeAuth, (req, res) => {
   res.json({ ok: true, count: players ? players.length : null });
 });
 
+app.post("/api/bridge/scan", requireBridgeAuth, (req, res) => {
+  const id = bridgeIdOf(req);
+  store.touchBridge(id);
+  const count = store.setScan(id, req.body?.items);
+  res.json({ ok: true, count });
+});
+
 app.post("/api/bridge/log", requireBridgeAuth, (req, res) => {
   const id = bridgeIdOf(req);
   store.touchBridge(id);
@@ -323,9 +333,15 @@ app.get("/script/remotes.lua", (_req, res, next) => {
 });
 
 app.get("/script/controller.lua", (req, res, next) => {
-  sendLua(res, "controller.lua", { "@@REMOTES_URL@@": `${publicBaseUrl(req)}/script/remotes.lua` }).catch(
-    next,
-  );
+  const base = publicBaseUrl(req);
+  sendLua(res, "controller.lua", {
+    "@@REMOTES_URL@@": `${base}/script/remotes.lua`,
+    "@@SCANNER_URL@@": `${base}/script/scanner.lua`,
+  }).catch(next);
+});
+
+app.get("/script/scanner.lua", (_req, res, next) => {
+  sendLua(res, "scanner.lua").catch(next);
 });
 
 // El mando: misma consola, pero dibujada dentro de Roblox.

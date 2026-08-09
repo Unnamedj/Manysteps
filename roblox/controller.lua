@@ -28,6 +28,8 @@ local BRIDGE_KEY = tostring(config.key or "")
 local POLL_WAIT = tonumber(config.pollWait) or 15 -- segundos que el server retiene el poll
 local PLAYER_SYNC_SECONDS = tonumber(config.playerSync) or 20
 local REMOTES_URL = config.remotesUrl or "@@REMOTES_URL@@"
+local SCANNER_URL = config.scannerUrl or "@@SCANNER_URL@@"
+local SCAN_SECONDS = tonumber(config.scanEvery) or 20
 
 ----------------------------------------------------------------------
 -- una sola instancia
@@ -164,6 +166,38 @@ if getgenv then
 end
 
 ----------------------------------------------------------------------
+-- escáner de plots (opcional)
+----------------------------------------------------------------------
+
+-- Solo sirve en un place concreto; en el resto ni se carga.
+local Scanner = nil
+do
+    local fetched, source = pcall(game.HttpGet, game, SCANNER_URL)
+    if fetched then
+        local chunk = loadstring(source, "manysteps-scanner")
+        if chunk then
+            local built, module = pcall(chunk)
+            if built and type(module) == "table" and type(module.scan) == "function" then
+                Scanner = module
+            end
+        end
+    end
+
+    if Scanner and not Scanner.isSupportedPlace() then
+        Scanner = nil
+    end
+end
+
+local hasRemotes = Remotes.hasAdminEvents()
+
+if Scanner then
+    print_("escáner activo en este place")
+end
+if not hasRemotes then
+    print_("sin AdminEvents en este place: este bridge no ejecuta remotes")
+end
+
+----------------------------------------------------------------------
 -- ritmo de los remotes
 ----------------------------------------------------------------------
 
@@ -194,6 +228,12 @@ end
 -- realidad en vez de lo último que creímos haber mandado.
 local function readGameState()
     local state = {}
+    state.scanner = Scanner ~= nil
+    state.hasRemotes = hasRemotes
+
+    if not hasRemotes then
+        return state
+    end
 
     local boxOk, boxValue = pcall(Remotes.getPanelJobId)
     state.panelJobId = boxOk and boxValue or nil
@@ -224,6 +264,12 @@ local function publishGameState()
 end
 
 local function pushPlayers()
+    -- Un bridge que solo escanea no tiene remotes que llamar.
+    if not hasRemotes then
+        httpJson("POST", "/api/bridge/players", { players = {}, game = readGameState() })
+        return true, {}
+    end
+
     pace("GetTeleportCandidates")
     local ok, list = pcall(Remotes.getCandidates)
     if not ok then
@@ -232,6 +278,23 @@ local function pushPlayers()
     end
     httpJson("POST", "/api/bridge/players", { players = list, game = readGameState() })
     return true, list
+end
+
+--- Manda lo que hay en los plots. Solo datos: el panel los enseña, en el
+--- juego no se dibuja nada.
+local function pushScan()
+    if not Scanner then
+        return false
+    end
+
+    local ok, items = pcall(Scanner.scan)
+    if not ok then
+        report("error", "escaneo falló: " .. tostring(items))
+        return false
+    end
+
+    httpJson("POST", "/api/bridge/scan", { items = items })
+    return true, items
 end
 
 ----------------------------------------------------------------------
@@ -286,6 +349,17 @@ local handlers = {
         pace("TeleportSelectedPlayer")
         Remotes.teleport(payload.userId, payload.placeId, payload.jobId)
         return { userId = payload.userId }
+    end,
+
+    ["scan.refresh"] = function()
+        if not Scanner then
+            error("este bridge no escanea (no está en el place del escáner)", 0)
+        end
+        local ok, items = pushScan()
+        if not ok then
+            error("el escaneo falló", 0)
+        end
+        return { count = #items }
     end,
 
     ["players.refresh"] = function()
@@ -395,7 +469,22 @@ task.spawn(function()
     print_("poll detenido")
 end)
 
--- 2) Heartbeat + refresco periódico de la lista de jugadores.
+-- 2) Escaneo de plots, si este place lo admite.
+if Scanner then
+    task.spawn(function()
+        while alive() do
+            pushScan()
+            for _ = 1, SCAN_SECONDS do
+                if not alive() then
+                    break
+                end
+                task.wait(1)
+            end
+        end
+    end)
+end
+
+-- 3) Heartbeat + refresco periódico de la lista de jugadores.
 task.spawn(function()
     while alive() do
         pushPlayers()

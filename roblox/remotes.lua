@@ -59,6 +59,13 @@ local function getFolder()
     return folder
 end
 
+--- ¿Existe la carpeta de remotes en este juego? Sin lanzar: un bridge
+--- puede estar en un place donde solo escanea y no hay AdminEvents.
+function Remotes.hasAdminEvents()
+    local folder = ReplicatedStorage:FindFirstChild(FOLDER_NAME)
+    return folder ~= nil
+end
+
 local function getRemote(name)
     local folder = getFolder()
     local remote = folder:FindFirstChild(name)

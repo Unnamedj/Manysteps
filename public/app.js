@@ -33,6 +33,15 @@ const el = {
 
   roster: $("roster"),
   rosterCount: $("rosterCount"),
+  rosterFoot: $("rosterFoot"),
+  tabPlayers: $("tabPlayers"),
+  tabScan: $("tabScan"),
+  scan: $("scan"),
+  scanList: $("scanList"),
+  scanCount: $("scanCount"),
+  scanFoot: $("scanFoot"),
+  scanSearch: $("scanSearch"),
+  scanRefreshBtn: $("scanRefreshBtn"),
   search: $("search"),
   selectAllBtn: $("selectAllBtn"),
   clearSelBtn: $("clearSelBtn"),
@@ -56,6 +65,7 @@ const el = {
 const selected = new Set();
 // A qué bridge van las órdenes: "all" o el id de uno concreto.
 let target = "all";
+let tab = "players";
 let snapshot = null;
 let rosterSignature = "";
 let socket = null;
@@ -223,6 +233,9 @@ function applySnapshot(state) {
   el.placeHint.dataset.ok = state.settings.savedPlaceIdAt ? "1" : "0";
 
   renderRoster();
+  // El contador de la pestaña se actualiza aunque no la estés mirando.
+  el.scanCount.textContent = String(state.scan?.items?.length ?? 0);
+  if (tab === "scan") renderScan();
   renderDestination();
 }
 
@@ -370,6 +383,7 @@ function renderBridges(list) {
       target = bridge.id;
       renderBridges(snapshot?.bridges || []);
       renderRoster();
+      renderScan();
       renderClock();
     });
 
@@ -409,6 +423,88 @@ function renderPlaces(places) {
   for (const button of el.places.children) {
     button.dataset.active = button.dataset.placeId === current ? "1" : "0";
   }
+}
+
+/**
+ * Lo que los bridges han escaneado en sus plots. Solo lectura: aquí no
+ * se manda nada al juego, es la foto de lo que hay.
+ */
+function renderScan() {
+  const scan = snapshot?.scan ?? { items: [], updatedAt: 0 };
+  const all = scan.items ?? [];
+  const filtered = target === "all" ? all : all.filter((i) => i.bridgeId === target);
+
+  const query = el.scanSearch.value.trim().toLowerCase();
+  const visible = query
+    ? filtered.filter(
+        (i) =>
+          i.name.toLowerCase().includes(query) ||
+          i.owner.toLowerCase().includes(query) ||
+          i.mutation.toLowerCase().includes(query),
+      )
+    : filtered;
+
+  el.scanCount.textContent = String(all.length);
+  el.scanList.replaceChildren();
+
+  if (visible.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "scan__empty";
+    const scanners = (snapshot?.bridges ?? []).filter((b) => b.online && b.scanner).length;
+    empty.textContent = all.length
+      ? "nada coincide con la búsqueda"
+      : scanners > 0
+        ? "escaneando…"
+        : "ningún bridge está en el place del escáner";
+    el.scanList.append(empty);
+  } else {
+    for (const item of visible.slice(0, 500)) {
+      const row = document.createElement("div");
+      row.className = "scan__row";
+
+      const name = document.createElement("span");
+      name.className = "scan__name";
+      name.textContent = item.name;
+      row.append(name);
+
+      if (item.mutation) {
+        const mutation = document.createElement("i");
+        mutation.className = "scan__mut";
+        mutation.textContent = item.mutation;
+        row.append(mutation);
+      }
+
+      const owner = document.createElement("span");
+      owner.className = "scan__owner";
+      owner.textContent = item.owner;
+      owner.title = `${item.plot} · visto por ${item.bridgeName}`;
+      row.append(owner);
+
+      const plot = document.createElement("span");
+      plot.className = "scan__plot";
+      plot.textContent = item.plot;
+      row.append(plot);
+
+      el.scanList.append(row);
+    }
+  }
+
+  el.scanFoot.textContent = scan.updatedAt
+    ? `${visible.length} de ${all.length} · actualizado ${ago(scan.updatedAt)}`
+    : "sin datos todavía";
+}
+
+function setTab(next) {
+  tab = next;
+  el.tabPlayers.dataset.active = next === "players" ? "1" : "0";
+  el.tabScan.dataset.active = next === "scan" ? "1" : "0";
+
+  el.roster.hidden = next !== "players";
+  el.rosterFoot.hidden = next !== "players";
+  document.querySelector(".roster__tools").hidden = next !== "players";
+  el.scan.hidden = next !== "scan";
+
+  if (next === "scan") renderScan();
 }
 
 function renderRoster() {
@@ -638,6 +734,13 @@ for (const input of [el.placeInput, el.jobInput]) {
 }
 
 el.search.addEventListener("input", renderRoster);
+el.scanSearch.addEventListener("input", renderScan);
+el.tabPlayers.addEventListener("click", () => setTab("players"));
+el.tabScan.addEventListener("click", () => setTab("scan"));
+
+el.scanRefreshBtn.addEventListener("click", () => {
+  send("scan.refresh").catch(() => {});
+});
 
 el.selectAllBtn.addEventListener("click", () => {
   for (const node of el.roster.children) {
